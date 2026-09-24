@@ -1,17 +1,38 @@
-# michiake
+# みちあけ v0.1
 
-A new Flutter project.
+移動した場所が少しずつ地図にひらく Android アプリです。位置情報と探索結果は端末内の SQLite に保存します。アカウント、独自バックエンド、クラウド同期はありません。
 
-## Getting Started
+## 動作
 
-This project is a starting point for a Flutter application.
+- MapLibre と OpenFreeMap Liberty の地図。Google Maps API キーは使いません。地図タイルを表示するときは OpenFreeMap へ通信します。
+- 位置情報 Foreground Service が約8秒ごとに位置を取得し、精度30m以内の点を記録します。
+- 徒歩、ランニング、自転車、自動車、バス、電車、船などを区別せず記録します。高度・速度が航空機らしい位置点は除外します。
+- H3 resolution 13 のセルを使い、軌跡を約5m間隔で補間しながら周囲7セルを探索済みにします。平均セル面積に基づく約10m幅の近似で、厳密な円形バッファではありません。
+- GPSの欠測が15分以内かつ前後距離20km以内なら区間を補間します。それを超える区間は接続しません。異常に速い位置ジャンプと精度不良点は探索に加えません。
+- Fog of War、今日の新規探索面積・移動距離・累計面積、日別履歴、日単位の取り消しを備えます。日を取り消しても別の日にも通ったセルは残ります。
+- 診断画面に位置許可、GPS、追跡サービス、保存位置点、探索済みセル数を表示します。
 
-A few resources to get you started if this is your first Flutter project:
+## 初回設定
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+オンボーディングで位置情報の利用目的を説明し、常時探索には Android の「位置情報を常に許可」が必要であることを案内します。探索中は Android の Foreground Service 通知を表示します。ホーム画面のスイッチからいつでも停止できます。
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Android の制約上、端末再起動後に位置情報 Foreground Service を自動起動する設定は無効にしています。再起動後はアプリを一度開いてください。サービス自体はシステム終了後の自動再開に対応する設定です。
+
+## データ設計
+
+SQLite schema version 1 は、GPS点、日別セル到達記録、最初に探索した日と面積を分けて保存します。このため、将来の SQLite ファイルのバックアップや GPX 等の過去ログ取り込みを加えやすくしています。v0.1 にバックアップ、クラウド同期、過去ログ取り込み機能はありません。
+
+## ビルドと確認
+
+Flutter 3.44 / Dart 3.12、Android SDK 36、JDK 21 で作成・検証しています。MapLibre 0.27.1 の Android ビルド要件に合わせ JDK 21 を使います。
+
+```powershell
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+```
+
+APK: `build/app/outputs/flutter-apk/app-debug.apk`
+
+GPS の継続性、端末再起動後の復旧、端末メーカーごとの省電力設定、地図表示速度は実機での受け入れ確認が必要です。

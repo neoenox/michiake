@@ -1,5 +1,5 @@
 name: michiake
-description: "A new Flutter project."
+description: "通った場所が地図にひらく、ローカル保存型の自動探索アプリ。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 0.1.0+1
 
 environment:
   sdk: ^3.12.0
@@ -34,6 +34,14 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  maplibre_gl: 0.27.1
+  flutter_foreground_task: 11.0.3
+  fl_location: 5.0.0
+  h3_flutter: 0.7.1
+  sqflite: 2.4.4
+  path: 1.9.1
+  shared_preferences: ^2.5.5
+  app_settings: ^9.0.0
 
 dev_dependencies:
   flutter_test:
@@ -45,6 +53,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  sqflite_common_ffi: ^2.4.3
+  shared_preferences_platform_interface: 2.4.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

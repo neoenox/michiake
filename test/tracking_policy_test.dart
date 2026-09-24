@@ -11,14 +11,14 @@ GeoSample point({
   int seconds = 0,
   bool mock = false,
 }) => GeoSample(
-      latitude: lat,
-      longitude: lon,
-      accuracy: accuracy,
-      altitude: altitude,
-      speed: speed,
-      timestamp: DateTime.utc(2026, 1, 1).add(Duration(seconds: seconds)),
-      isMock: mock,
-    );
+  latitude: lat,
+  longitude: lon,
+  accuracy: accuracy,
+  altitude: altitude,
+  speed: speed,
+  timestamp: DateTime.utc(2026, 1, 1).add(Duration(seconds: seconds)),
+  isMock: mock,
+);
 
 void main() {
   const policy = TrackingPolicy();
@@ -31,17 +31,25 @@ void main() {
   });
 
   test('bridges a reasonable GPS gap while retaining ordinary rail speed', () {
-    expect(policy.evaluate(point(), point(lon: 139.01, seconds: 90)),
-        SegmentDecision.connect);
-    expect(policy.evaluate(point(), point(speed: 95, altitude: 100, seconds: 1)),
-        SegmentDecision.connect);
+    expect(
+      policy.evaluate(point(), point(lon: 139.01, seconds: 90)),
+      SegmentDecision.connect,
+    );
+    expect(
+      policy.evaluate(point(), point(speed: 95, altitude: 100, seconds: 1)),
+      SegmentDecision.connect,
+    );
   });
 
   test('breaks long gaps and excludes aircraft-like movement', () {
-    expect(policy.evaluate(point(), point(lon: 139.001, seconds: 901)),
-        SegmentDecision.startNew);
-    expect(policy.evaluate(point(), point(speed: 220, altitude: 9000)),
-        SegmentDecision.rejectAndBreak);
+    expect(
+      policy.evaluate(point(), point(lon: 139.001, seconds: 901)),
+      SegmentDecision.startNew,
+    );
+    expect(
+      policy.evaluate(point(), point(speed: 220, altitude: 9000)),
+      SegmentDecision.rejectAndBreak,
+    );
   });
 
   test('computes realistic great-circle distances', () {
