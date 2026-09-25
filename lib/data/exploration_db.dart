@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'package:h3_flutter/h3_flutter.dart';
@@ -216,10 +218,23 @@ class ExplorationDb {
     required double east,
   }) async {
     final db = await database;
-    final minLat = south.clamp(-90.0, 90.0);
-    final maxLat = north.clamp(-90.0, 90.0);
-    final minLon = west.clamp(-180.0, 180.0);
-    final maxLon = east.clamp(-180.0, 180.0);
+    // Resolution-13 H3 cells can extend about 15 m from their centers.
+    // Pad by 25 m to include cells whose polygons overlap the viewport.
+    const paddingMeters = 25.0;
+    const metersPerLatitudeDegree = 111320.0;
+    final minLat = (south - paddingMeters / metersPerLatitudeDegree)
+        .clamp(-90.0, 90.0);
+    final maxLat = (north + paddingMeters / metersPerLatitudeDegree)
+        .clamp(-90.0, 90.0);
+    final longitudeScale =
+        metersPerLatitudeDegree * math.cos(
+          (south.abs() > north.abs() ? south.abs() : north.abs()) * math.pi / 180,
+        ).abs();
+    final longitudePadding = longitudeScale < 1
+        ? 180.0
+        : paddingMeters / longitudeScale;
+    final minLon = _wrapLongitude(west - longitudePadding);
+    final maxLon = _wrapLongitude(east + longitudePadding);
     final longitudeFilter = minLon <= maxLon
         ? 'center_lon BETWEEN ? AND ?'
         : '(center_lon >= ? OR center_lon <= ?)';
@@ -232,6 +247,11 @@ class ExplorationDb {
       [minLat, maxLat, minLon, maxLon],
     );
     return rows.map((row) => row['cell_id']! as String).toList(growable: false);
+  }
+
+  double _wrapLongitude(double longitude) {
+    final wrapped = (longitude + 180) % 360;
+    return (wrapped < 0 ? wrapped + 360 : wrapped) - 180;
   }
 
   ({double lat, double lon}) _cellCenter(String cellId, GeoSample fallback) {

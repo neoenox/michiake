@@ -356,6 +356,14 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       // The map can be recreating its style while returning from another screen.
     } finally {
       _fogRefreshing = false;
+      if (_fogRefreshQueued && mounted) {
+        final retryForce = _forceFogRefreshQueued;
+        _fogRefreshQueued = false;
+        _forceFogRefreshQueued = false;
+        Future<void>.delayed(Duration.zero, () {
+          if (mounted) _refreshFog(force: retryForce);
+        });
+      }
     }
   }
 

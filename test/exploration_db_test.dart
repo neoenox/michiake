@@ -36,6 +36,52 @@ void main() {
     await (await db.database).close();
   });
 
+  test('viewport query includes cell centers just outside visible bounds', () async {
+    final db = ExplorationDb(pathOverride: inMemoryDatabasePath);
+    final sql = await db.database;
+    await sql.insert('explored_cells', {
+      'cell_id': 'overlap',
+      'area_m2': 45,
+      'first_seen_at': 1,
+      'first_seen_day': '2026-01-01',
+      'center_lat': 34.9999,
+      'center_lon': 139.0,
+    });
+
+    final visible = await db.loadExploredCellsInBounds(
+      south: 35.0,
+      west: 139.0,
+      north: 35.001,
+      east: 139.001,
+    );
+
+    expect(visible, contains('overlap'));
+    await sql.close();
+  });
+
+  test('viewport padding wraps across the antimeridian', () async {
+    final db = ExplorationDb(pathOverride: inMemoryDatabasePath);
+    final sql = await db.database;
+    await sql.insert('explored_cells', {
+      'cell_id': 'dateline',
+      'area_m2': 45,
+      'first_seen_at': 1,
+      'first_seen_day': '2026-01-01',
+      'center_lat': 0.0,
+      'center_lon': -179.9999,
+    });
+
+    final visible = await db.loadExploredCellsInBounds(
+      south: -0.001,
+      west: 179.9999,
+      north: 0.001,
+      east: -179.9999,
+    );
+
+    expect(visible, contains('dateline'));
+    await sql.close();
+  });
+
   test(
     'viewport query filters a large cell history before geometry work',
     () async {
