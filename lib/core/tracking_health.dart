@@ -2,6 +2,7 @@ const trackingSampleStaleAfter = Duration(minutes: 2);
 
 String trackingStatusLabel({
   required bool serviceRunning,
+  required bool locationStreamHealthy,
   required DateTime? lastSuccessfulSampleAt,
   required String? latestError,
   DateTime? now,
@@ -15,7 +16,7 @@ String trackingStatusLabel({
   final savedAt = lastSuccessfulSampleAt.toLocal();
   final timeLabel =
       '${savedAt.hour.toString().padLeft(2, '0')}:${savedAt.minute.toString().padLeft(2, '0')}';
-  if (age > trackingSampleStaleAfter) {
+  if (!locationStreamHealthy && age > trackingSampleStaleAfter) {
     return '記録が止まっている可能性 · 最終保存 $timeLabel';
   }
   return '記録中 · 最終保存 $timeLabel';
