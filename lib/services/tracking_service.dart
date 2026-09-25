@@ -75,7 +75,7 @@ class _LocationTaskHandler extends TaskHandler {
     try {
       await engine.initialize();
     } catch (_) {
-      await _settings.setLocationStreamHealthy(false);
+      await _setStreamHealthy(false);
       await _recordError('探索データを読み込めません');
       return;
     }
@@ -97,32 +97,61 @@ class _LocationTaskHandler extends TaskHandler {
                 timestamp: location.timestamp,
                 isMock: location.isMock,
               );
-              _writes = _writes.then((_) => _recordSample(sample));
+              _enqueueWrite(() async {
+                await _setStreamHealthy(true);
+                await _recordSample(sample);
+              });
             },
             onError: (Object _) {
-              _writes = _writes.then((_) async {
-                await _settings.setLocationStreamHealthy(false);
+              _enqueueWrite(() async {
+                await _setStreamHealthy(false);
                 await _recordError('位置情報を受信できません');
               });
             },
             onDone: () {
               if (!_destroying) {
-                _writes = _writes.then((_) async {
-                  await _settings.setLocationStreamHealthy(false);
+                _enqueueWrite(() async {
+                  await _setStreamHealthy(false);
                   await _recordError('位置情報の取得が停止しました');
                 });
               }
             },
           );
-      _writes = _writes.then((_) async {
-        await _settings.setLocationStreamHealthy(true);
-        await _settings.setLatestTrackingError(null);
+      _enqueueWrite(() async {
+        await _setStreamHealthy(true);
+        await _clearLatestError();
       });
     } catch (_) {
-      _writes = _writes.then((_) async {
-        await _settings.setLocationStreamHealthy(false);
+      _enqueueWrite(() async {
+        await _setStreamHealthy(false);
         await _recordError('位置情報を受信できません');
       });
+    }
+  }
+
+  void _enqueueWrite(Future<void> Function() operation) {
+    _writes = _writes.then((_) async {
+      try {
+        await operation();
+      } catch (_) {
+        // A diagnostic write must not poison the queue or skip later samples.
+      }
+    });
+  }
+
+  Future<void> _setStreamHealthy(bool value) async {
+    try {
+      await _settings.setLocationStreamHealthy(value);
+    } catch (_) {
+      // Stream diagnostics must not block location persistence.
+    }
+  }
+
+  Future<void> _clearLatestError() async {
+    try {
+      await _settings.setLatestTrackingError(null);
+    } catch (_) {
+      // Stream diagnostics must not block location persistence.
     }
   }
 

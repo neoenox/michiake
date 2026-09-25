@@ -318,7 +318,12 @@ class _MapHomeScreenState extends State<MapHomeScreen>
     } catch (_) {
       latestError = '記録状態を確認できません';
     }
-    final streamHealthy = await _settings.locationStreamHealthy;
+    var streamHealthy = false;
+    try {
+      streamHealthy = await _settings.locationStreamHealthy;
+    } catch (_) {
+      latestError ??= '記録状態を確認できません';
+    }
     if (!mounted) return;
     setState(() {
       _totals = totals;
