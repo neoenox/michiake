@@ -77,6 +77,8 @@ class _LocationTaskHandler extends TaskHandler {
           interval: 8000,
           distanceFilter: 5,
         ).listen((location) {
+          // Start the revision read before this sample waits behind earlier writes.
+          final queuedRevision = _db.trackingRevision;
           final sample = GeoSample(
             latitude: location.latitude,
             longitude: location.longitude,
@@ -87,7 +89,12 @@ class _LocationTaskHandler extends TaskHandler {
             isMock: location.isMock,
           );
           _writes = _writes
-              .then((_) => _engine?.accept(sample))
+              .then((_) async {
+                await _engine?.accept(
+                  sample,
+                  queuedRevision: await queuedRevision,
+                );
+              })
               .then((_) {})
               .catchError((Object _) {});
         });
