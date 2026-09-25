@@ -25,11 +25,32 @@ android {
         versionName = flutter.versionName
     }
 
+    val uploadSigning = listOf(
+        "MICHIAKE_UPLOAD_STORE_FILE",
+        "MICHIAKE_UPLOAD_STORE_PASSWORD",
+        "MICHIAKE_UPLOAD_KEY_ALIAS",
+        "MICHIAKE_UPLOAD_KEY_PASSWORD",
+    ).associateWith { System.getenv(it) }
+    val hasUploadSigning = uploadSigning.values.all { it != null }
+    require(hasUploadSigning || uploadSigning.values.all { it == null }) {
+        "Configure all MICHIAKE_UPLOAD_* release signing variables or leave all unset."
+    }
+    if (hasUploadSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(uploadSigning.getValue("MICHIAKE_UPLOAD_STORE_FILE")!!)
+                storePassword = uploadSigning.getValue("MICHIAKE_UPLOAD_STORE_PASSWORD")
+                keyAlias = uploadSigning.getValue("MICHIAKE_UPLOAD_KEY_ALIAS")
+                keyPassword = uploadSigning.getValue("MICHIAKE_UPLOAD_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (hasUploadSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
@@ -43,3 +64,4 @@ kotlin {
 flutter {
     source = "../.."
 }
+

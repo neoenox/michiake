@@ -35,4 +35,8 @@ flutter build apk --debug
 
 APK: `build/app/outputs/flutter-apk/app-debug.apk`
 
+## Release signing
+
+Release APKs are unsigned unless a release keystore is supplied through the four `MICHIAKE_UPLOAD_*` environment variables used by Gradle. Set these as protected CI secrets and keep the keystore file outside the repository. The GitHub Actions workflow deliberately builds an unsigned release APK and does not need signing secrets. Do not distribute that unsigned build.
+
 GPS の継続性、端末再起動後の復旧、端末メーカーごとの省電力設定、地図表示速度は実機での受け入れ確認が必要です。
