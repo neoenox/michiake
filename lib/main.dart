@@ -151,7 +151,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         );
       }
     } catch (_) {
-      await TrackingSettings().setAutoTrackingEnabled(false);
+      try {
+        await TrackingSettings().setAutoTrackingEnabled(false);
+      } catch (_) {
+        // Preserve the original onboarding error if preferences are unavailable.
+      }
       if (mounted) {
         setState(() => _message = '設定を確認できませんでした。端末の位置情報設定を確認してください。');
       }
