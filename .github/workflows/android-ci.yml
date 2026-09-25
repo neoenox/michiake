@@ -1,0 +1,55 @@
+name: Android CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44.0'
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Build unsigned release APK
+        run: flutter build apk --release
+
+      - name: Ensure release APK has no debug or upload signature
+        shell: bash
+        run: |
+          build_tools="${ANDROID_SDK_ROOT}/build-tools"
+          latest_tools="$(find "$build_tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          if "$latest_tools/apksigner" verify build/app/outputs/flutter-apk/app-release.apk; then
+            echo "Release APK unexpectedly contains a signature." >&2
+            exit 1
+          fi
