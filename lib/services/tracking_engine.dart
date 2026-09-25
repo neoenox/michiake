@@ -17,10 +17,10 @@ class TrackingEngine {
 
   Future<void> initialize() async => _previous = await _db.latestSample();
 
-  Future<void> accept(GeoSample sample) async {
+  Future<bool> accept(GeoSample sample) async {
     if (!_policy.isUsablePoint(sample) || _policy.isLikelyAircraft(sample)) {
       _previous = null;
-      return;
+      return false;
     }
     final previous = _previous;
     final decision = previous == null
@@ -28,7 +28,7 @@ class TrackingEngine {
         : _policy.evaluate(previous, sample);
     if (decision == SegmentDecision.rejectAndBreak) {
       _previous = null;
-      return;
+      return false;
     }
     final distance = decision == SegmentDecision.connect
         ? TrackingPolicy.distanceMeters(
@@ -48,5 +48,6 @@ class TrackingEngine {
       cells: cells,
     );
     _previous = sample;
+    return true;
   }
 }
