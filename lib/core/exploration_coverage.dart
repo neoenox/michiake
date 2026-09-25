@@ -54,7 +54,13 @@ class ExplorationCoverage implements CoverageProvider {
     return result;
   }
 
-  Map<String, dynamic> fogGeoJson(Iterable<String> ids) {
+  Map<String, dynamic> fogGeoJson(
+    Iterable<String> ids, {
+    double south = -85,
+    double west = -180,
+    double north = 85,
+    double east = 180,
+  }) {
     final indexes = <BigInt>[];
     for (final id in ids) {
       try {
@@ -64,12 +70,27 @@ class ExplorationCoverage implements CoverageProvider {
         continue;
       }
     }
-    final worldRing = <List<double>>[
-      [-180, -85],
-      [180, -85],
-      [180, 85],
-      [-180, 85],
-      [-180, -85],
+    // A world-sized polygon wraps at the antimeridian in MapLibre. Restrict
+    // the fog exterior to the viewport plus a small margin so it is drawable.
+    const viewportPaddingMeters = 100.0;
+    const metersPerLatitudeDegree = 111320.0;
+    final latitudePadding = viewportPaddingMeters / metersPerLatitudeDegree;
+    final maxAbsLatitude = math.max(south.abs(), north.abs());
+    final metersPerLongitudeDegree =
+        metersPerLatitudeDegree * math.cos(maxAbsLatitude * math.pi / 180);
+    final longitudePadding = metersPerLongitudeDegree.abs() < 1
+        ? 180.0
+        : viewportPaddingMeters / metersPerLongitudeDegree.abs();
+    final minLatitude = (south - latitudePadding).clamp(-85.0, 85.0);
+    final maxLatitude = (north + latitudePadding).clamp(-85.0, 85.0);
+    final minLongitude = (west - longitudePadding).clamp(-180.0, 180.0);
+    final maxLongitude = (east + longitudePadding).clamp(-180.0, 180.0);
+    final viewportRing = <List<double>>[
+      [minLongitude, minLatitude],
+      [maxLongitude, minLatitude],
+      [maxLongitude, maxLatitude],
+      [minLongitude, maxLatitude],
+      [minLongitude, minLatitude],
     ];
     final List<List<List<GeoCoord>>> polygons = indexes.isEmpty
         ? <List<List<GeoCoord>>>[]
@@ -83,7 +104,7 @@ class ExplorationCoverage implements CoverageProvider {
       if (ring.length >= 4) holes.add(_clockwise(ring));
     }
     final fogPolygons = <List<List<List<double>>>>[
-      [worldRing, ...holes],
+      [viewportRing, ...holes],
     ];
     for (final polygon in polygons) {
       for (final inner in polygon.skip(1)) {
