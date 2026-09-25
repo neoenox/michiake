@@ -83,7 +83,10 @@ class _StartupGateState extends State<_StartupGate> {
 }
 
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
+  const OnboardingScreen({super.key, this.startTracking, this.homeBuilder});
+
+  final Future<bool> Function()? startTracking;
+  final WidgetBuilder? homeBuilder;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -99,13 +102,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _message = null;
     });
     try {
-      if (!await FlLocation.isLocationServicesEnabled) {
+      await TrackingSettings().setAutoTrackingEnabled(false);
+      if (widget.startTracking == null &&
+          !await FlLocation.isLocationServicesEnabled) {
         setState(() => _message = '端末の位置情報をオンにしてください。');
         return;
       }
-      var permission = await FlLocation.checkLocationPermission();
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
+      var permission = widget.startTracking == null
+          ? await FlLocation.checkLocationPermission()
+          : LocationPermission.always;
+      if (widget.startTracking == null &&
+          (permission == LocationPermission.denied ||
+              permission == LocationPermission.deniedForever)) {
         permission = await FlLocation.requestLocationPermission();
       }
       if (permission == LocationPermission.denied ||
@@ -113,7 +121,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         setState(() => _message = '位置情報の許可が必要です。設定から許可してください。');
         return;
       }
-      if (permission == LocationPermission.whileInUse) {
+      if (widget.startTracking == null &&
+          permission == LocationPermission.whileInUse) {
         permission = await FlLocation.requestLocationPermission();
       }
       if (permission != LocationPermission.always) {
@@ -121,20 +130,31 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         await AppSettings.openAppSettings(type: AppSettingsType.settings);
         return;
       }
-      await FlutterForegroundTask.requestNotificationPermission();
-      await TrackingSettings().setOnboardingCompleted(true);
-      await TrackingSettings().setAutoTrackingEnabled(true);
-      final started = await TrackingService.start();
-      if (!started && mounted) {
-        setState(() => _message = '自動探索を開始できませんでした。診断画面から状態を確認してください。');
+      if (widget.startTracking == null) {
+        await FlutterForegroundTask.requestNotificationPermission();
       }
+      final started =
+          await (widget.startTracking?.call() ?? TrackingService.start());
+      await TrackingSettings().setAutoTrackingEnabled(started);
+      if (!started) {
+        if (mounted) {
+          setState(() => _message = '自動探索を開始できませんでした。もう一度お試しください。');
+        }
+        return;
+      }
+      await TrackingSettings().setOnboardingCompleted(true);
       if (mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute<void>(builder: (_) => const MapHomeScreen()),
+          MaterialPageRoute<void>(
+            builder: widget.homeBuilder ?? (_) => const MapHomeScreen(),
+          ),
         );
       }
     } catch (_) {
-      setState(() => _message = '設定を確認できませんでした。端末の位置情報設定を確認してください。');
+      await TrackingSettings().setAutoTrackingEnabled(false);
+      if (mounted) {
+        setState(() => _message = '設定を確認できませんでした。端末の位置情報設定を確認してください。');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
