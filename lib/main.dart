@@ -679,7 +679,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         _DiagnosticRow(label: '探索済みセル', value: '$_cells'),
         const SizedBox(height: 12),
         const Text(
-          '位置情報と探索記録はこの端末内のSQLiteに保存されます。アカウントや同期サーバーはありません。地図タイルの表示にはネット接続が必要です。',
+          '位置情報と探索記録はこの端末内に保存され、端末のクラウドバックアップや端末間コピーの対象にはなりません。アカウントや同期サーバーはありません。地図タイルの表示にはネット接続が必要です。',
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
