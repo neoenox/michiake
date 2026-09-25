@@ -16,11 +16,13 @@ void main() {
       sample: _sample(DateTime(2026, 1, 1, 9)),
       segmentDistanceMeters: 0,
       cells: {'a': 40},
+      expectedRevision: await db.trackingRevision,
     );
     await db.recordSample(
       sample: _sample(DateTime(2026, 1, 2, 9)),
       segmentDistanceMeters: 120,
       cells: {'a': 40, 'b': 45},
+      expectedRevision: await db.trackingRevision,
     );
 
     await db.undoDay('2026-01-01');
