@@ -7,20 +7,37 @@ class TrackingEngine {
   TrackingEngine(
     this._db, {
     this._policy = const TrackingPolicy(),
-    ExplorationCoverage? coverage,
+    CoverageProvider? coverage,
   }) : _coverage = coverage ?? ExplorationCoverage();
 
   final ExplorationDb _db;
   final TrackingPolicy _policy;
-  final ExplorationCoverage _coverage;
+  final CoverageProvider _coverage;
   GeoSample? _previous;
+  int _revision = 0;
 
-  Future<void> initialize() async => _previous = await _db.latestSample();
+  Future<void> initialize() async {
+    _revision = await _db.trackingRevision;
+    _previous = await _db.latestSample();
+  }
 
-  Future<void> accept(GeoSample sample) async {
+  Future<bool> accept(
+    GeoSample sample, {
+    required int queuedRevision,
+  }) async {
+    final currentRevision = await _db.trackingRevision;
+    if (currentRevision != queuedRevision) {
+      _revision = currentRevision;
+      _previous = null;
+      return false;
+    }
+    if (currentRevision != _revision) {
+      _revision = currentRevision;
+      _previous = null;
+    }
     if (!_policy.isUsablePoint(sample) || _policy.isLikelyAircraft(sample)) {
       _previous = null;
-      return;
+      return false;
     }
     final previous = _previous;
     final decision = previous == null
@@ -28,7 +45,7 @@ class TrackingEngine {
         : _policy.evaluate(previous, sample);
     if (decision == SegmentDecision.rejectAndBreak) {
       _previous = null;
-      return;
+      return false;
     }
     final distance = decision == SegmentDecision.connect
         ? TrackingPolicy.distanceMeters(
@@ -42,11 +59,18 @@ class TrackingEngine {
       decision == SegmentDecision.connect ? previous : null,
       sample,
     );
-    await _db.recordSample(
+    final recorded = await _db.recordSample(
       sample: sample,
       segmentDistanceMeters: distance,
       cells: cells,
+      expectedRevision: _revision,
     );
-    _previous = sample;
+    if (recorded) {
+      _previous = sample;
+    } else {
+      _revision = await _db.trackingRevision;
+      _previous = null;
+    }
+    return recorded;
   }
 }

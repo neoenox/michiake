@@ -5,13 +5,18 @@ import 'package:h3_flutter/h3_flutter.dart';
 import 'geo_sample.dart';
 import 'tracking_policy.dart';
 
-class ExplorationCoverage {
+abstract interface class CoverageProvider {
+  Map<String, double> forSegment(GeoSample? start, GeoSample end);
+}
+
+class ExplorationCoverage implements CoverageProvider {
   ExplorationCoverage({H3? h3}) : _h3 = h3 ?? const H3Factory().load();
 
   static const resolution = 13;
   static const sampleSpacingMeters = 5.0;
   final H3 _h3;
 
+  @override
   Map<String, double> forSegment(GeoSample? start, GeoSample end) {
     final meters = start == null
         ? 0.0

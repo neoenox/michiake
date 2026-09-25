@@ -7,6 +7,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'core/exploration_coverage.dart';
+import 'core/tracking_health.dart';
 import 'data/exploration_db.dart';
 import 'services/tracking_service.dart';
 import 'settings/tracking_settings.dart';
@@ -293,9 +294,16 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   MapLibreMapController? _map;
   Timer? _refreshTimer;
   bool _tracking = false;
+  bool _locationStreamHealthy = false;
+  DateTime? _lastSuccessfulSampleAt;
+  String? _latestTrackingError;
   bool _sourceReady = false;
   bool _mapProblem = false;
   int? _fogCellCount;
+  String? _fogViewportKey;
+  bool _fogRefreshing = false;
+  bool _fogRefreshQueued = false;
+  bool _forceFogRefreshQueued = false;
   Map<String, num> _totals = const {};
 
   @override
@@ -318,33 +326,95 @@ class _MapHomeScreenState extends State<MapHomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refresh();
+    if (state == AppLifecycleState.resumed) _refresh(forceFog: true);
   }
 
-  Future<void> _refresh() async {
-    final totals = await _db.totalsFor(DateTime.now());
+  Future<void> _refresh({bool forceFog = false}) async {
+    var totals = _totals;
+    String? databaseReadError;
+    try {
+      totals = await _db.totalsFor(DateTime.now());
+    } catch (_) {
+      databaseReadError = '探索データベースを読み込めません';
+    }
     final running = await TrackingService.isRunning;
+    DateTime? latestSavedAt;
+    String? latestError = databaseReadError;
+    try {
+      latestSavedAt = (await _db.latestSample())?.timestamp;
+      latestError ??= await _settings.latestTrackingError;
+    } catch (_) {
+      latestError = '記録状態を確認できません';
+    }
+    var streamHealthy = false;
+    try {
+      streamHealthy = await _settings.locationStreamHealthy;
+    } catch (_) {
+      latestError ??= '記録状態を確認できません';
+    }
     if (!mounted) return;
     setState(() {
       _totals = totals;
       _tracking = running;
+      _lastSuccessfulSampleAt = latestSavedAt;
+      _latestTrackingError = latestError;
+      _locationStreamHealthy = running && streamHealthy;
     });
-    await _refreshFog();
+    await _refreshFog(force: forceFog);
   }
 
-  Future<void> _refreshFog() async {
+  Future<void> _refreshFog({bool force = false}) async {
     final controller = _map;
     if (controller == null || !_sourceReady) return;
+    if (_fogRefreshing) {
+      _fogRefreshQueued = true;
+      _forceFogRefreshQueued |= force;
+      return;
+    }
+    _fogRefreshing = true;
     try {
-      final cellCount = await _db.exploredCellCount;
-      if (_fogCellCount == cellCount) return;
-      await controller.setGeoJsonSource(
-        'fog',
-        _coverage.fogGeoJson(await _db.loadExploredCells()),
-      );
-      _fogCellCount = cellCount;
+      var refreshForce = force;
+      do {
+        _fogRefreshQueued = false;
+        final queuedForce = _forceFogRefreshQueued;
+        _forceFogRefreshQueued = false;
+        final bounds = await controller.getVisibleRegion();
+        final viewportKey =
+            '${bounds.southwest.latitude.toStringAsFixed(4)},'
+            '${bounds.southwest.longitude.toStringAsFixed(4)},'
+            '${bounds.northeast.latitude.toStringAsFixed(4)},'
+            '${bounds.northeast.longitude.toStringAsFixed(4)}';
+        final cellCount = await _db.exploredCellCount;
+        if (!refreshForce &&
+            !queuedForce &&
+            _fogCellCount == cellCount &&
+            _fogViewportKey == viewportKey) {
+          refreshForce = false;
+          continue;
+        }
+        final cells = await _db.loadExploredCellsInBounds(
+          south: bounds.southwest.latitude,
+          west: bounds.southwest.longitude,
+          north: bounds.northeast.latitude,
+          east: bounds.northeast.longitude,
+        );
+        await controller.setGeoJsonSource('fog', _coverage.fogGeoJson(cells));
+        _fogCellCount = cellCount;
+        _fogViewportKey = viewportKey;
+        refreshForce = false;
+      } while (_fogRefreshQueued && mounted);
     } catch (_) {
       // The map can be recreating its style while returning from another screen.
+    } finally {
+      _fogRefreshing = false;
+      if (_fogRefreshQueued && mounted) {
+        final retryForce = _forceFogRefreshQueued;
+        _fogRefreshQueued = false;
+        _forceFogRefreshQueued = false;
+        Future<void>.delayed(Duration.zero, () {
+          if (mounted) _refreshFog(force: retryForce);
+        });
+      }
     }
   }
 
@@ -371,17 +441,14 @@ class _MapHomeScreenState extends State<MapHomeScreen>
     final controller = _map;
     if (controller == null) return;
     try {
-      await controller.addGeoJsonSource(
-        'fog',
-        _coverage.fogGeoJson(await _db.loadExploredCells()),
-      );
+      await controller.addGeoJsonSource('fog', _coverage.fogGeoJson(const []));
       await controller.addLayer(
         'fog-layer',
         'fog',
         const FillLayerProperties(fillColor: '#101722', fillOpacity: 0.82),
       );
       _sourceReady = true;
-      _fogCellCount = await _db.exploredCellCount;
+      await _refreshFog(force: true);
       if (mounted) setState(() => _mapProblem = false);
     } catch (_) {
       if (mounted) setState(() => _mapProblem = true);
@@ -419,7 +486,9 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       await _settings.setAutoTrackingEnabled(started);
       await _refresh();
     } catch (_) {
+      await _settings.setAutoTrackingEnabled(false);
       if (mounted) _showMessage('位置情報の設定を確認できませんでした。診断画面を確認してください。');
+      await _refresh();
     }
   }
 
@@ -475,6 +544,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                       AttributionButtonPosition.bottomLeft,
                   onMapCreated: _onMapCreated,
                   onStyleLoadedCallback: _onStyleLoaded,
+                  onCameraIdle: () => _refreshFog(force: true),
                 ),
                 if (_mapProblem)
                   const Align(
@@ -495,12 +565,18 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                       child: Row(
                         children: [
                           Icon(
-                            _tracking
-                                ? Icons.radar
-                                : Icons.pause_circle_outline,
-                            color: _tracking
-                                ? const Color(0xff0e8b78)
-                                : Colors.black45,
+                            !_tracking
+                                ? Icons.pause_circle_outline
+                                : _hasRecordingProblem
+                                ? Icons.error_outline
+                                : _lastSuccessfulSampleAt == null
+                                ? Icons.hourglass_top
+                                : Icons.radar,
+                            color: !_tracking
+                                ? Colors.black45
+                                : _hasRecordingProblem
+                                ? Colors.red.shade700
+                                : const Color(0xff0e8b78),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -508,7 +584,14 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _tracking ? '自動探索中' : '自動探索は停止中',
+                                  trackingStatusLabel(
+                                    serviceRunning: _tracking,
+                                    locationStreamHealthy:
+                                        _locationStreamHealthy,
+                                    lastSuccessfulSampleAt:
+                                        _lastSuccessfulSampleAt,
+                                    latestError: _latestTrackingError,
+                                  ),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -558,6 +641,13 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       ),
     ),
   );
+
+  bool get _hasRecordingProblem =>
+      _latestTrackingError != null ||
+      (!_locationStreamHealthy &&
+          _lastSuccessfulSampleAt != null &&
+          DateTime.now().difference(_lastSuccessfulSampleAt!) >
+              trackingSampleStaleAfter);
 
   void _open(Widget page) => Navigator.of(
     context,
@@ -649,6 +739,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   String _permission = '確認中';
   int _points = 0;
   int _cells = 0;
+  DateTime? _lastSuccessfulSampleAt;
+  String? _latestTrackingError;
 
   @override
   void initState() {
@@ -658,6 +750,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
 
   Future<void> _load() async {
     try {
+      final latestSample = await _db.latestSample();
+      final latestError = await _settings.latestTrackingError;
       final values = await Future.wait<Object>([
         TrackingService.isRunning,
         FlLocation.isLocationServicesEnabled,
@@ -674,6 +768,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         _points = values[3] as int;
         _cells = values[4] as int;
         _enabled = values[5] as bool;
+        _lastSuccessfulSampleAt = latestSample?.timestamp;
+        _latestTrackingError = latestError;
       });
     } catch (_) {
       if (mounted) setState(() => _permission = '取得できません');
@@ -695,6 +791,13 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           value: _service == null ? '確認中' : (_service! ? '稼働中' : '停止中'),
         ),
         _DiagnosticRow(
+          label: '最後に正常保存した位置',
+          value: _lastSuccessfulSampleAt == null
+              ? 'まだありません'
+              : _lastSuccessfulSampleAt!.toLocal().toString().substring(0, 16),
+        ),
+        _DiagnosticRow(label: '直近の記録エラー', value: _latestTrackingError ?? 'なし'),
+        _DiagnosticRow(
           label: '位置情報サービス',
           value: _gps == null ? '確認中' : (_gps! ? 'オン' : 'オフ'),
         ),
@@ -703,7 +806,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         _DiagnosticRow(label: '探索済みセル', value: '$_cells'),
         const SizedBox(height: 12),
         const Text(
-          '位置情報と探索記録はこの端末内のSQLiteに保存されます。アカウントや同期サーバーはありません。地図タイルの表示にはネット接続が必要です。',
+          '位置情報と探索記録はこの端末内に保存され、端末のクラウドバックアップや端末間コピーの対象にはなりません。アカウントや同期サーバーはありません。地図タイルの表示にはネット接続が必要です。',
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
