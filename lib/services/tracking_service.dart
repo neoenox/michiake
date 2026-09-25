@@ -5,6 +5,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../core/geo_sample.dart';
 import '../data/exploration_db.dart';
+import '../settings/tracking_settings.dart';
 import 'tracking_engine.dart';
 
 class TrackingService {
@@ -62,42 +63,100 @@ void trackingStartCallback() {
 
 class _LocationTaskHandler extends TaskHandler {
   final ExplorationDb _db = ExplorationDb();
+  final TrackingSettings _settings = TrackingSettings();
   TrackingEngine? _engine;
   StreamSubscription<Location>? _subscription;
   Future<void> _writes = Future.value();
+  bool _destroying = false;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     final engine = TrackingEngine(_db);
-    await engine.initialize();
+    try {
+      await engine.initialize();
+    } catch (_) {
+      await _settings.setLocationStreamHealthy(false);
+      await _recordError('探索データを読み込めません');
+      return;
+    }
     _engine = engine;
-    _subscription =
-        FlLocation.getLocationStream(
-          accuracy: LocationAccuracy.best,
-          interval: 8000,
-          distanceFilter: 5,
-        ).listen((location) {
-          // Start the revision read before this sample waits behind earlier writes.
-          final queuedRevision = _db.trackingRevision;
-          final sample = GeoSample(
-            latitude: location.latitude,
-            longitude: location.longitude,
-            accuracy: location.accuracy,
-            altitude: location.altitude,
-            speed: location.speed,
-            timestamp: location.timestamp,
-            isMock: location.isMock,
+    try {
+      _subscription =
+          FlLocation.getLocationStream(
+            accuracy: LocationAccuracy.best,
+            interval: 8000,
+            distanceFilter: 5,
+          ).listen(
+            (location) {
+              // Capture the revision before this sample waits behind pending writes.
+              final queuedRevision = _db.trackingRevision;
+              final sample = GeoSample(
+                latitude: location.latitude,
+                longitude: location.longitude,
+                accuracy: location.accuracy,
+                altitude: location.altitude,
+                speed: location.speed,
+                timestamp: location.timestamp,
+                isMock: location.isMock,
+              );
+              _enqueueWrite(() async {
+                await _recordSample(sample, await queuedRevision);
+              });
+            },
+            onError: (Object _) {
+              _enqueueWrite(() async {
+                await _settings.setLocationStreamHealthy(false);
+                await _recordError('位置情報を受信できません');
+              });
+            },
+            onDone: () {
+              if (!_destroying) {
+                _enqueueWrite(() async {
+                  await _settings.setLocationStreamHealthy(false);
+                  await _recordError('位置情報の取得が停止しました');
+                });
+              }
+            },
           );
-          _writes = _writes
-              .then((_) async {
-                await _engine?.accept(
-                  sample,
-                  queuedRevision: await queuedRevision,
-                );
-              })
-              .then((_) {})
-              .catchError((Object _) {});
-        });
+      _enqueueWrite(() async {
+        await _settings.setLocationStreamHealthy(true);
+        await _settings.setLatestTrackingError(null);
+      });
+    } catch (_) {
+      _enqueueWrite(() async {
+        await _settings.setLocationStreamHealthy(false);
+        await _recordError('位置情報を受信できません');
+      });
+    }
+  }
+
+  void _enqueueWrite(Future<void> Function() action) {
+    _writes = _writes.then((_) => action()).catchError((Object _) {});
+  }
+
+  Future<void> _recordSample(GeoSample sample, int queuedRevision) async {
+    try {
+      final saved =
+          await _engine?.accept(sample, queuedRevision: queuedRevision) ?? false;
+      if (saved) {
+        try {
+          await _settings.setLocationStreamHealthy(true);
+          await _settings.setLatestTrackingError(null);
+        } catch (_) {
+          // A diagnostic preference must not interrupt location recording.
+        }
+      }
+    } catch (_) {
+      await _recordError('位置情報を保存できません');
+    }
+  }
+
+  Future<void> _recordError(String message) async {
+    try {
+      await _settings.setLatestTrackingError(message);
+    } catch (_) {
+      // Keep the foreground service alive even if diagnostics cannot be saved.
+    }
   }
 
   @override
@@ -105,6 +164,7 @@ class _LocationTaskHandler extends TaskHandler {
 
   @override
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    _destroying = true;
     await _subscription?.cancel();
     await _writes;
   }

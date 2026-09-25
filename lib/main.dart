@@ -7,6 +7,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'core/exploration_coverage.dart';
+import 'core/tracking_health.dart';
 import 'data/exploration_db.dart';
 import 'services/tracking_service.dart';
 import 'settings/tracking_settings.dart';
@@ -269,6 +270,9 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   MapLibreMapController? _map;
   Timer? _refreshTimer;
   bool _tracking = false;
+  bool _locationStreamHealthy = false;
+  DateTime? _lastSuccessfulSampleAt;
+  String? _latestTrackingError;
   bool _sourceReady = false;
   bool _mapProblem = false;
   int? _fogCellCount;
@@ -298,12 +302,30 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   }
 
   Future<void> _refresh() async {
-    final totals = await _db.totalsFor(DateTime.now());
+    var totals = _totals;
+    String? databaseReadError;
+    try {
+      totals = await _db.totalsFor(DateTime.now());
+    } catch (_) {
+      databaseReadError = '探索データベースを読み込めません';
+    }
     final running = await TrackingService.isRunning;
+    DateTime? latestSavedAt;
+    String? latestError = databaseReadError;
+    try {
+      latestSavedAt = (await _db.latestSample())?.timestamp;
+      latestError ??= await _settings.latestTrackingError;
+    } catch (_) {
+      latestError = '記録状態を確認できません';
+    }
+    final streamHealthy = await _settings.locationStreamHealthy;
     if (!mounted) return;
     setState(() {
       _totals = totals;
       _tracking = running;
+      _lastSuccessfulSampleAt = latestSavedAt;
+      _latestTrackingError = latestError;
+      _locationStreamHealthy = running && streamHealthy;
     });
     await _refreshFog();
   }
@@ -395,7 +417,9 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       await _settings.setAutoTrackingEnabled(started);
       await _refresh();
     } catch (_) {
+      await _settings.setAutoTrackingEnabled(false);
       if (mounted) _showMessage('位置情報の設定を確認できませんでした。診断画面を確認してください。');
+      await _refresh();
     }
   }
 
@@ -471,12 +495,18 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                       child: Row(
                         children: [
                           Icon(
-                            _tracking
-                                ? Icons.radar
-                                : Icons.pause_circle_outline,
-                            color: _tracking
-                                ? const Color(0xff0e8b78)
-                                : Colors.black45,
+                            !_tracking
+                                ? Icons.pause_circle_outline
+                                : _hasRecordingProblem
+                                ? Icons.error_outline
+                                : _lastSuccessfulSampleAt == null
+                                ? Icons.hourglass_top
+                                : Icons.radar,
+                            color: !_tracking
+                                ? Colors.black45
+                                : _hasRecordingProblem
+                                ? Colors.red.shade700
+                                : const Color(0xff0e8b78),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -484,7 +514,14 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _tracking ? '自動探索中' : '自動探索は停止中',
+                                  trackingStatusLabel(
+                                    serviceRunning: _tracking,
+                                    locationStreamHealthy:
+                                        _locationStreamHealthy,
+                                    lastSuccessfulSampleAt:
+                                        _lastSuccessfulSampleAt,
+                                    latestError: _latestTrackingError,
+                                  ),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -534,6 +571,13 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       ),
     ),
   );
+
+  bool get _hasRecordingProblem =>
+      _latestTrackingError != null ||
+      (!_locationStreamHealthy &&
+          _lastSuccessfulSampleAt != null &&
+          DateTime.now().difference(_lastSuccessfulSampleAt!) >
+              trackingSampleStaleAfter);
 
   void _open(Widget page) => Navigator.of(
     context,
@@ -625,6 +669,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   String _permission = '確認中';
   int _points = 0;
   int _cells = 0;
+  DateTime? _lastSuccessfulSampleAt;
+  String? _latestTrackingError;
 
   @override
   void initState() {
@@ -634,6 +680,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
 
   Future<void> _load() async {
     try {
+      final latestSample = await _db.latestSample();
+      final latestError = await _settings.latestTrackingError;
       final values = await Future.wait<Object>([
         TrackingService.isRunning,
         FlLocation.isLocationServicesEnabled,
@@ -650,6 +698,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         _points = values[3] as int;
         _cells = values[4] as int;
         _enabled = values[5] as bool;
+        _lastSuccessfulSampleAt = latestSample?.timestamp;
+        _latestTrackingError = latestError;
       });
     } catch (_) {
       if (mounted) setState(() => _permission = '取得できません');
@@ -671,6 +721,13 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           value: _service == null ? '確認中' : (_service! ? '稼働中' : '停止中'),
         ),
         _DiagnosticRow(
+          label: '最後に正常保存した位置',
+          value: _lastSuccessfulSampleAt == null
+              ? 'まだありません'
+              : _lastSuccessfulSampleAt!.toLocal().toString().substring(0, 16),
+        ),
+        _DiagnosticRow(label: '直近の記録エラー', value: _latestTrackingError ?? 'なし'),
+        _DiagnosticRow(
           label: '位置情報サービス',
           value: _gps == null ? '確認中' : (_gps! ? 'オン' : 'オフ'),
         ),
@@ -679,7 +736,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         _DiagnosticRow(label: '探索済みセル', value: '$_cells'),
         const SizedBox(height: 12),
         const Text(
-          '位置情報と探索記録はこの端末内のSQLiteに保存されます。アカウントや同期サーバーはありません。地図タイルの表示にはネット接続が必要です。',
+          '位置情報と探索記録はこの端末内に保存され、端末のクラウドバックアップや端末間コピーの対象にはなりません。アカウントや同期サーバーはありません。地図タイルの表示にはネット接続が必要です。',
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
