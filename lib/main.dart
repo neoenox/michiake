@@ -298,6 +298,8 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   DateTime? _lastSuccessfulSampleAt;
   String? _latestTrackingError;
   bool _sourceReady = false;
+  bool _styleReady = false;
+  bool _fogLayerInitializing = false;
   bool _mapProblem = false;
   int? _fogCellCount;
   String? _fogViewportKey;
@@ -398,7 +400,16 @@ class _MapHomeScreenState extends State<MapHomeScreen>
           north: bounds.northeast.latitude,
           east: bounds.northeast.longitude,
         );
-        await controller.setGeoJsonSource('fog', _coverage.fogGeoJson(cells));
+        await controller.setGeoJsonSource(
+          'fog',
+          _coverage.fogGeoJson(
+            cells,
+            south: bounds.southwest.latitude,
+            west: bounds.southwest.longitude,
+            north: bounds.northeast.latitude,
+            east: bounds.northeast.longitude,
+          ),
+        );
         _fogCellCount = cellCount;
         _fogViewportKey = viewportKey;
         refreshForce = false;
@@ -420,6 +431,9 @@ class _MapHomeScreenState extends State<MapHomeScreen>
 
   Future<void> _onMapCreated(MapLibreMapController controller) async {
     _map = controller;
+    // MapLibre may deliver the style callback before or after the controller
+    // callback. Try initialization from both sides; it runs once both exist.
+    unawaited(_initializeFogLayer());
     try {
       final permission = await FlLocation.checkLocationPermission();
       if (permission != LocationPermission.denied &&
@@ -438,20 +452,37 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   }
 
   Future<void> _onStyleLoaded() async {
+    _styleReady = true;
+    await _initializeFogLayer();
+  }
+
+  Future<void> _initializeFogLayer() async {
     final controller = _map;
-    if (controller == null) return;
+    if (controller == null ||
+        !_styleReady ||
+        _sourceReady ||
+        _fogLayerInitializing) {
+      return;
+    }
+    _fogLayerInitializing = true;
     try {
       await controller.addGeoJsonSource('fog', _coverage.fogGeoJson(const []));
       await controller.addLayer(
-        'fog-layer',
         'fog',
+        'fog-layer',
         const FillLayerProperties(fillColor: '#101722', fillOpacity: 0.82),
       );
+      final layerIds = await controller.getLayerIds();
+      if (!layerIds.contains('fog-layer')) {
+        throw StateError('Fog layer was not added to the map style.');
+      }
       _sourceReady = true;
       await _refreshFog(force: true);
       if (mounted) setState(() => _mapProblem = false);
     } catch (_) {
       if (mounted) setState(() => _mapProblem = true);
+    } finally {
+      _fogLayerInitializing = false;
     }
   }
 
