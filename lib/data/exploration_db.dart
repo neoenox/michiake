@@ -31,7 +31,18 @@ class ExplorationDb {
         pathOverride ?? p.join(await getDatabasesPath(), 'michiake.db');
     return _database = await openDatabase(
       path,
-      version: 1,
+      version: 2,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE tracking_state (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              revision INTEGER NOT NULL
+            )
+          ''');
+          await db.insert('tracking_state', {'id': 1, 'revision': 0});
+        }
+      },
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE explored_cells (
@@ -64,19 +75,36 @@ class ExplorationDb {
         ''');
         await db.execute('CREATE INDEX track_day_idx ON track_points(day_key)');
         await db.execute('CREATE INDEX cell_day_idx ON cell_days(day_key)');
+        await db.execute('''
+          CREATE TABLE tracking_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            revision INTEGER NOT NULL
+          )
+        ''');
+        await db.insert('tracking_state', {'id': 1, 'revision': 0});
       },
     );
   }
 
-  Future<void> recordSample({
+  Future<bool> recordSample({
     required GeoSample sample,
     required double segmentDistanceMeters,
     required Map<String, double> cells,
+    required int expectedRevision,
   }) async {
     final db = await database;
     final day = dayKey(sample.timestamp);
     final stamp = sample.timestamp.millisecondsSinceEpoch;
+    var recorded = false;
     await db.transaction((txn) async {
+      final revision = Sqflite.firstIntValue(
+        await txn.query(
+          'tracking_state',
+          columns: ['revision'],
+          where: 'id = 1',
+        ),
+      );
+      if (revision != expectedRevision) return;
       await txn.insert('track_points', {
         'latitude': sample.latitude,
         'longitude': sample.longitude,
@@ -100,8 +128,20 @@ class ExplorationDb {
           'first_seen_day': day,
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
+      recorded = true;
     });
+    return recorded;
   }
+
+  Future<int> get trackingRevision async =>
+      Sqflite.firstIntValue(
+        await (await database).query(
+          'tracking_state',
+          columns: ['revision'],
+          where: 'id = 1',
+        ),
+      ) ??
+      0;
 
   Future<GeoSample?> latestSample() async {
     final rows = await (await database).query(
@@ -199,6 +239,9 @@ class ExplorationDb {
           ORDER BY first_seen_at LIMIT 1
         )
       ''');
+      await txn.rawUpdate(
+        'UPDATE tracking_state SET revision = revision + 1 WHERE id = 1',
+      );
     });
   }
 

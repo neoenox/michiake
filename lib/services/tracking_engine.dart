@@ -7,17 +7,26 @@ class TrackingEngine {
   TrackingEngine(
     this._db, {
     this._policy = const TrackingPolicy(),
-    ExplorationCoverage? coverage,
+    CoverageProvider? coverage,
   }) : _coverage = coverage ?? ExplorationCoverage();
 
   final ExplorationDb _db;
   final TrackingPolicy _policy;
-  final ExplorationCoverage _coverage;
+  final CoverageProvider _coverage;
   GeoSample? _previous;
+  int _revision = 0;
 
-  Future<void> initialize() async => _previous = await _db.latestSample();
+  Future<void> initialize() async {
+    _revision = await _db.trackingRevision;
+    _previous = await _db.latestSample();
+  }
 
   Future<void> accept(GeoSample sample) async {
+    final currentRevision = await _db.trackingRevision;
+    if (currentRevision != _revision) {
+      _revision = currentRevision;
+      _previous = null;
+    }
     if (!_policy.isUsablePoint(sample) || _policy.isLikelyAircraft(sample)) {
       _previous = null;
       return;
@@ -42,11 +51,17 @@ class TrackingEngine {
       decision == SegmentDecision.connect ? previous : null,
       sample,
     );
-    await _db.recordSample(
+    final recorded = await _db.recordSample(
       sample: sample,
       segmentDistanceMeters: distance,
       cells: cells,
+      expectedRevision: _revision,
     );
-    _previous = sample;
+    if (recorded) {
+      _previous = sample;
+    } else {
+      _revision = await _db.trackingRevision;
+      _previous = null;
+    }
   }
 }
