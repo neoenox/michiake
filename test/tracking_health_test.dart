@@ -8,6 +8,7 @@ void main() {
     expect(
       trackingStatusLabel(
         serviceRunning: false,
+        locationStreamHealthy: false,
         lastSuccessfulSampleAt: now,
         latestError: null,
         now: now,
@@ -20,6 +21,7 @@ void main() {
     expect(
       trackingStatusLabel(
         serviceRunning: true,
+        locationStreamHealthy: true,
         lastSuccessfulSampleAt: null,
         latestError: null,
         now: now,
@@ -32,6 +34,7 @@ void main() {
     expect(
       trackingStatusLabel(
         serviceRunning: true,
+        locationStreamHealthy: true,
         lastSuccessfulSampleAt: now,
         latestError: '位置情報を保存できません',
         now: now,
@@ -44,6 +47,7 @@ void main() {
     expect(
       trackingStatusLabel(
         serviceRunning: true,
+        locationStreamHealthy: true,
         lastSuccessfulSampleAt: now.subtract(const Duration(seconds: 30)),
         latestError: null,
         now: now,
@@ -56,11 +60,25 @@ void main() {
     expect(
       trackingStatusLabel(
         serviceRunning: true,
+        locationStreamHealthy: false,
         lastSuccessfulSampleAt: now.subtract(const Duration(minutes: 3)),
         latestError: null,
         now: now,
       ),
       '記録が止まっている可能性 · 最終保存 11:57',
+    );
+  });
+
+  test('does not mark a healthy stationary stream as stale', () {
+    expect(
+      trackingStatusLabel(
+        serviceRunning: true,
+        locationStreamHealthy: true,
+        lastSuccessfulSampleAt: now.subtract(const Duration(minutes: 30)),
+        latestError: null,
+        now: now,
+      ),
+      '記録中 · 最終保存 11:30',
     );
   });
 }

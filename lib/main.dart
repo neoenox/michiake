@@ -270,6 +270,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   MapLibreMapController? _map;
   Timer? _refreshTimer;
   bool _tracking = false;
+  bool _locationStreamHealthy = false;
   DateTime? _lastSuccessfulSampleAt;
   String? _latestTrackingError;
   bool _sourceReady = false;
@@ -317,12 +318,14 @@ class _MapHomeScreenState extends State<MapHomeScreen>
     } catch (_) {
       latestError = '記録状態を確認できません';
     }
+    final streamHealthy = await _settings.locationStreamHealthy;
     if (!mounted) return;
     setState(() {
       _totals = totals;
       _tracking = running;
       _lastSuccessfulSampleAt = latestSavedAt;
       _latestTrackingError = latestError;
+      _locationStreamHealthy = running && streamHealthy;
     });
     await _refreshFog();
   }
@@ -513,6 +516,8 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                                 Text(
                                   trackingStatusLabel(
                                     serviceRunning: _tracking,
+                                    locationStreamHealthy:
+                                        _locationStreamHealthy,
                                     lastSuccessfulSampleAt:
                                         _lastSuccessfulSampleAt,
                                     latestError: _latestTrackingError,
@@ -569,7 +574,8 @@ class _MapHomeScreenState extends State<MapHomeScreen>
 
   bool get _hasRecordingProblem =>
       _latestTrackingError != null ||
-      (_lastSuccessfulSampleAt != null &&
+      (!_locationStreamHealthy &&
+          _lastSuccessfulSampleAt != null &&
           DateTime.now().difference(_lastSuccessfulSampleAt!) >
               trackingSampleStaleAfter);
 

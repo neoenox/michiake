@@ -4,6 +4,7 @@ class TrackingSettings {
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
 
   static const _trackingErrorKey = 'tracking_latest_error';
+  static const _locationStreamHealthyKey = 'location_stream_healthy';
 
   Future<bool> get onboardingCompleted async =>
       await _preferences.getBool('onboarding_completed') ?? false;
@@ -27,4 +28,10 @@ class TrackingSettings {
       await _preferences.setString(_trackingErrorKey, message);
     }
   }
+
+  Future<bool> get locationStreamHealthy async =>
+      await _preferences.getBool(_locationStreamHealthyKey) ?? false;
+
+  Future<void> setLocationStreamHealthy(bool value) =>
+      _preferences.setBool(_locationStreamHealthyKey, value);
 }

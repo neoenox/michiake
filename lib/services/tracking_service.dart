@@ -75,6 +75,7 @@ class _LocationTaskHandler extends TaskHandler {
     try {
       await engine.initialize();
     } catch (_) {
+      await _settings.setLocationStreamHealthy(false);
       await _recordError('探索データを読み込めません');
       return;
     }
@@ -99,14 +100,29 @@ class _LocationTaskHandler extends TaskHandler {
               _writes = _writes.then((_) => _recordSample(sample));
             },
             onError: (Object _) {
-              unawaited(_recordError('位置情報を受信できません'));
+              _writes = _writes.then((_) async {
+                await _settings.setLocationStreamHealthy(false);
+                await _recordError('位置情報を受信できません');
+              });
             },
             onDone: () {
-              if (!_destroying) unawaited(_recordError('位置情報の取得が停止しました'));
+              if (!_destroying) {
+                _writes = _writes.then((_) async {
+                  await _settings.setLocationStreamHealthy(false);
+                  await _recordError('位置情報の取得が停止しました');
+                });
+              }
             },
           );
+      _writes = _writes.then((_) async {
+        await _settings.setLocationStreamHealthy(true);
+        await _settings.setLatestTrackingError(null);
+      });
     } catch (_) {
-      await _recordError('位置情報を受信できません');
+      _writes = _writes.then((_) async {
+        await _settings.setLocationStreamHealthy(false);
+        await _recordError('位置情報を受信できません');
+      });
     }
   }
 
