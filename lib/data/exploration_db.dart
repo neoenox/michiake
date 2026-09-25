@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import 'package:h3_flutter/h3_flutter.dart';
 
 import '../core/geo_sample.dart';
 
@@ -24,6 +25,8 @@ class ExplorationDb {
 
   final String? pathOverride;
   Database? _database;
+  H3? _h3;
+  H3 get _h3Api => _h3 ??= const H3Factory().load();
 
   Future<Database> get database async {
     if (_database case final db?) return db;
@@ -31,7 +34,7 @@ class ExplorationDb {
         pathOverride ?? p.join(await getDatabasesPath(), 'michiake.db');
     return _database = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('''
@@ -42,6 +45,35 @@ class ExplorationDb {
           ''');
           await db.insert('tracking_state', {'id': 1, 'revision': 0});
         }
+        if (oldVersion < 3) {
+          await db.execute(
+            'ALTER TABLE explored_cells ADD COLUMN center_lat REAL',
+          );
+          await db.execute(
+            'ALTER TABLE explored_cells ADD COLUMN center_lon REAL',
+          );
+          final rows = await db.query('explored_cells', columns: ['cell_id']);
+          final batch = db.batch();
+          for (final row in rows) {
+            final id = row['cell_id']! as String;
+            if (id.length < 15) continue;
+            try {
+              final center = _h3Api.cellToGeo(BigInt.parse(id, radix: 16));
+              batch.update(
+                'explored_cells',
+                {'center_lat': center.lat, 'center_lon': center.lon},
+                where: 'cell_id = ?',
+                whereArgs: [id],
+              );
+            } on FormatException {
+              continue;
+            }
+          }
+          await batch.commit(noResult: true);
+          await db.execute(
+            'CREATE INDEX explored_center_idx ON explored_cells(center_lat, center_lon)',
+          );
+        }
       },
       onCreate: (db, _) async {
         await db.execute('''
@@ -49,7 +81,9 @@ class ExplorationDb {
             cell_id TEXT PRIMARY KEY,
             area_m2 REAL NOT NULL,
             first_seen_at INTEGER NOT NULL,
-            first_seen_day TEXT NOT NULL
+            first_seen_day TEXT NOT NULL,
+            center_lat REAL,
+            center_lon REAL
           )
         ''');
         await db.execute('''
@@ -75,6 +109,9 @@ class ExplorationDb {
         ''');
         await db.execute('CREATE INDEX track_day_idx ON track_points(day_key)');
         await db.execute('CREATE INDEX cell_day_idx ON cell_days(day_key)');
+        await db.execute(
+          'CREATE INDEX explored_center_idx ON explored_cells(center_lat, center_lon)',
+        );
         await db.execute('''
           CREATE TABLE tracking_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -116,6 +153,7 @@ class ExplorationDb {
         'segment_distance_m': segmentDistanceMeters,
       });
       for (final entry in cells.entries) {
+        final center = _cellCenter(entry.key, sample);
         await txn.insert('cell_days', {
           'cell_id': entry.key,
           'day_key': day,
@@ -126,6 +164,8 @@ class ExplorationDb {
           'area_m2': entry.value,
           'first_seen_at': stamp,
           'first_seen_day': day,
+          'center_lat': center.lat,
+          'center_lon': center.lon,
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
       recorded = true;
@@ -168,6 +208,43 @@ class ExplorationDb {
         'explored_cells',
         columns: ['cell_id'],
       )).map((row) => row['cell_id']! as String).toList(growable: false);
+
+  Future<List<String>> loadExploredCellsInBounds({
+    required double south,
+    required double west,
+    required double north,
+    required double east,
+  }) async {
+    final db = await database;
+    final minLat = south.clamp(-90.0, 90.0);
+    final maxLat = north.clamp(-90.0, 90.0);
+    final minLon = west.clamp(-180.0, 180.0);
+    final maxLon = east.clamp(-180.0, 180.0);
+    final longitudeFilter = minLon <= maxLon
+        ? 'center_lon BETWEEN ? AND ?'
+        : '(center_lon >= ? OR center_lon <= ?)';
+    final rows = await db.rawQuery(
+      '''
+      SELECT cell_id FROM explored_cells
+      WHERE center_lat BETWEEN ? AND ? AND $longitudeFilter
+        AND center_lat IS NOT NULL AND center_lon IS NOT NULL
+      ''',
+      [minLat, maxLat, minLon, maxLon],
+    );
+    return rows.map((row) => row['cell_id']! as String).toList(growable: false);
+  }
+
+  ({double lat, double lon}) _cellCenter(String cellId, GeoSample fallback) {
+    if (cellId.length < 15) {
+      return (lat: fallback.latitude, lon: fallback.longitude);
+    }
+    try {
+      final center = _h3Api.cellToGeo(BigInt.parse(cellId, radix: 16));
+      return (lat: center.lat, lon: center.lon);
+    } on FormatException {
+      return (lat: fallback.latitude, lon: fallback.longitude);
+    }
+  }
 
   Future<List<HistoryDay>> history() async {
     final rows = await (await database).rawQuery('''

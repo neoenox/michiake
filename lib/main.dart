@@ -272,6 +272,10 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   bool _sourceReady = false;
   bool _mapProblem = false;
   int? _fogCellCount;
+  String? _fogViewportKey;
+  bool _fogRefreshing = false;
+  bool _fogRefreshQueued = false;
+  bool _forceFogRefreshQueued = false;
   Map<String, num> _totals = const {};
 
   @override
@@ -294,10 +298,10 @@ class _MapHomeScreenState extends State<MapHomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refresh();
+    if (state == AppLifecycleState.resumed) _refresh(forceFog: true);
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({bool forceFog = false}) async {
     final totals = await _db.totalsFor(DateTime.now());
     final running = await TrackingService.isRunning;
     if (!mounted) return;
@@ -305,22 +309,53 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       _totals = totals;
       _tracking = running;
     });
-    await _refreshFog();
+    await _refreshFog(force: forceFog);
   }
 
-  Future<void> _refreshFog() async {
+  Future<void> _refreshFog({bool force = false}) async {
     final controller = _map;
     if (controller == null || !_sourceReady) return;
+    if (_fogRefreshing) {
+      _fogRefreshQueued = true;
+      _forceFogRefreshQueued |= force;
+      return;
+    }
+    _fogRefreshing = true;
     try {
-      final cellCount = await _db.exploredCellCount;
-      if (_fogCellCount == cellCount) return;
-      await controller.setGeoJsonSource(
-        'fog',
-        _coverage.fogGeoJson(await _db.loadExploredCells()),
-      );
-      _fogCellCount = cellCount;
+      var refreshForce = force;
+      do {
+        _fogRefreshQueued = false;
+        final queuedForce = _forceFogRefreshQueued;
+        _forceFogRefreshQueued = false;
+        final bounds = await controller.getVisibleRegion();
+        final viewportKey =
+            '${bounds.southwest.latitude.toStringAsFixed(4)},'
+            '${bounds.southwest.longitude.toStringAsFixed(4)},'
+            '${bounds.northeast.latitude.toStringAsFixed(4)},'
+            '${bounds.northeast.longitude.toStringAsFixed(4)}';
+        final cellCount = await _db.exploredCellCount;
+        if (!refreshForce &&
+            !queuedForce &&
+            _fogCellCount == cellCount &&
+            _fogViewportKey == viewportKey) {
+          refreshForce = false;
+          continue;
+        }
+        final cells = await _db.loadExploredCellsInBounds(
+          south: bounds.southwest.latitude,
+          west: bounds.southwest.longitude,
+          north: bounds.northeast.latitude,
+          east: bounds.northeast.longitude,
+        );
+        await controller.setGeoJsonSource('fog', _coverage.fogGeoJson(cells));
+        _fogCellCount = cellCount;
+        _fogViewportKey = viewportKey;
+        refreshForce = false;
+      } while (_fogRefreshQueued && mounted);
     } catch (_) {
       // The map can be recreating its style while returning from another screen.
+    } finally {
+      _fogRefreshing = false;
     }
   }
 
@@ -347,17 +382,14 @@ class _MapHomeScreenState extends State<MapHomeScreen>
     final controller = _map;
     if (controller == null) return;
     try {
-      await controller.addGeoJsonSource(
-        'fog',
-        _coverage.fogGeoJson(await _db.loadExploredCells()),
-      );
+      await controller.addGeoJsonSource('fog', _coverage.fogGeoJson(const []));
       await controller.addLayer(
         'fog-layer',
         'fog',
         const FillLayerProperties(fillColor: '#101722', fillOpacity: 0.82),
       );
       _sourceReady = true;
-      _fogCellCount = await _db.exploredCellCount;
+      await _refreshFog(force: true);
       if (mounted) setState(() => _mapProblem = false);
     } catch (_) {
       if (mounted) setState(() => _mapProblem = true);
@@ -451,6 +483,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                       AttributionButtonPosition.bottomLeft,
                   onMapCreated: _onMapCreated,
                   onStyleLoadedCallback: _onStyleLoaded,
+                  onCameraIdle: () => _refreshFog(force: true),
                 ),
                 if (_mapProblem)
                   const Align(

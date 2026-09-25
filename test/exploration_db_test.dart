@@ -35,6 +35,47 @@ void main() {
     expect(await db.trackPointCount, 0);
     await (await db.database).close();
   });
+
+  test(
+    'viewport query filters a large cell history before geometry work',
+    () async {
+      final db = ExplorationDb(pathOverride: inMemoryDatabasePath);
+      final sql = await db.database;
+      await sql.transaction((txn) async {
+        final batch = txn.batch();
+        for (var index = 0; index < 10000; index++) {
+          final lat = 30 + index / 1000;
+          batch.insert('explored_cells', {
+            'cell_id': index.toRadixString(16),
+            'area_m2': 45,
+            'first_seen_at': index,
+            'first_seen_day': '2026-01-01',
+            'center_lat': lat,
+            'center_lon': 139.0,
+          });
+        }
+        await batch.commit(noResult: true);
+      });
+
+      final watch = Stopwatch()..start();
+      final visible = await db.loadExploredCellsInBounds(
+        south: 34.99,
+        west: 138.99,
+        north: 35.009,
+        east: 139.01,
+      );
+      watch.stop();
+
+      expect(visible.length, 20);
+      expect(visible.length, lessThan(10000 ~/ 100));
+      // Keep a local measurement available when diagnosing this query.
+      // ignore: avoid_print
+      print(
+        'Viewport query: 10,000 cells -> ${visible.length} in ${watch.elapsedMilliseconds}ms',
+      );
+      await sql.close();
+    },
+  );
 }
 
 GeoSample _sample(DateTime time) => GeoSample(
