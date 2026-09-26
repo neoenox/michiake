@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:app_settings/app_settings.dart';
 import 'package:fl_location/fl_location.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
@@ -11,11 +12,14 @@ import 'core/tracking_health.dart';
 import 'data/exploration_db.dart';
 import 'services/tracking_service.dart';
 import 'settings/tracking_settings.dart';
+import 'web_preview_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterForegroundTask.initCommunicationPort();
-  TrackingService.initialize();
+  if (!kIsWeb) {
+    FlutterForegroundTask.initCommunicationPort();
+    TrackingService.initialize();
+  }
   runApp(const MichiakeApp());
 }
 
@@ -33,7 +37,7 @@ class MichiakeApp extends StatelessWidget {
       ),
       useMaterial3: true,
     ),
-    home: const _StartupGate(),
+    home: kIsWeb ? const WebPreviewScreen() : const _StartupGate(),
   );
 }
 
