@@ -5,11 +5,37 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../core/geo_sample.dart';
 import '../data/exploration_db.dart';
-import '../settings/tracking_settings.dart';
 import 'tracking_engine.dart';
 
 class TrackingService {
   static const _serviceId = 8201;
+  static const _locationStreamHealthyKey =
+      'michiake_location_stream_healthy';
+  static const _latestTrackingErrorKey = 'michiake_latest_tracking_error';
+
+  static Future<bool?> get locationStreamHealthy =>
+      FlutterForegroundTask.getData<bool>(key: _locationStreamHealthyKey);
+
+  static Future<String?> get latestTrackingError =>
+      FlutterForegroundTask.getData<String>(key: _latestTrackingErrorKey);
+
+  static Future<void> _setLocationStreamHealthy(bool value) async {
+    await FlutterForegroundTask.saveData(
+      key: _locationStreamHealthyKey,
+      value: value,
+    );
+  }
+
+  static Future<void> _setLatestTrackingError(String? message) async {
+    if (message == null) {
+      await FlutterForegroundTask.removeData(key: _latestTrackingErrorKey);
+    } else {
+      await FlutterForegroundTask.saveData(
+        key: _latestTrackingErrorKey,
+        value: message,
+      );
+    }
+  }
 
   static void initialize() {
     FlutterForegroundTask.init(
@@ -37,6 +63,12 @@ class TrackingService {
 
   static Future<bool> start() async {
     if (await FlutterForegroundTask.isRunningService) return true;
+    try {
+      await _setLocationStreamHealthy(false);
+      await _setLatestTrackingError(null);
+    } catch (_) {
+      // Diagnostics must never prevent the tracking service from starting.
+    }
     final result = await FlutterForegroundTask.startService(
       serviceId: _serviceId,
       serviceTypes: const [ForegroundServiceTypes.location],
@@ -51,6 +83,11 @@ class TrackingService {
     if (await FlutterForegroundTask.isRunningService) {
       await FlutterForegroundTask.stopService();
     }
+    try {
+      await _setLocationStreamHealthy(false);
+    } catch (_) {
+      // The service is already stopped; stale diagnostics are non-critical.
+    }
   }
 
   static Future<bool> get isRunning => FlutterForegroundTask.isRunningService;
@@ -63,7 +100,6 @@ void trackingStartCallback() {
 
 class _LocationTaskHandler extends TaskHandler {
   final ExplorationDb _db = ExplorationDb();
-  final TrackingSettings _settings = TrackingSettings();
   TrackingEngine? _engine;
   StreamSubscription<Location>? _subscription;
   Future<void> _writes = Future.value();
@@ -75,7 +111,7 @@ class _LocationTaskHandler extends TaskHandler {
     try {
       await engine.initialize();
     } catch (_) {
-      await _settings.setLocationStreamHealthy(false);
+      await _recordHealth(false);
       await _recordError('探索データを読み込めません');
       return;
     }
@@ -105,26 +141,26 @@ class _LocationTaskHandler extends TaskHandler {
             },
             onError: (Object _) {
               _enqueueWrite(() async {
-                await _settings.setLocationStreamHealthy(false);
+                await _recordHealth(false);
                 await _recordError('位置情報を受信できません');
               });
             },
             onDone: () {
               if (!_destroying) {
                 _enqueueWrite(() async {
-                  await _settings.setLocationStreamHealthy(false);
+                  await _recordHealth(false);
                   await _recordError('位置情報の取得が停止しました');
                 });
               }
             },
           );
       _enqueueWrite(() async {
-        await _settings.setLocationStreamHealthy(true);
-        await _settings.setLatestTrackingError(null);
+        await _recordHealth(true);
+        await _clearError();
       });
     } catch (_) {
       _enqueueWrite(() async {
-        await _settings.setLocationStreamHealthy(false);
+        await _recordHealth(false);
         await _recordError('位置情報を受信できません');
       });
     }
@@ -139,21 +175,33 @@ class _LocationTaskHandler extends TaskHandler {
       final saved =
           await _engine?.accept(sample, queuedRevision: queuedRevision) ?? false;
       if (saved) {
-        try {
-          await _settings.setLocationStreamHealthy(true);
-          await _settings.setLatestTrackingError(null);
-        } catch (_) {
-          // A diagnostic preference must not interrupt location recording.
-        }
+        await _recordHealth(true);
+        await _clearError();
       }
     } catch (_) {
       await _recordError('位置情報を保存できません');
     }
   }
 
+  Future<void> _recordHealth(bool healthy) async {
+    try {
+      await TrackingService._setLocationStreamHealthy(healthy);
+    } catch (_) {
+      // Diagnostic state must not interrupt location recording.
+    }
+  }
+
+  Future<void> _clearError() async {
+    try {
+      await TrackingService._setLatestTrackingError(null);
+    } catch (_) {
+      // Diagnostic state must not interrupt location recording.
+    }
+  }
+
   Future<void> _recordError(String message) async {
     try {
-      await _settings.setLatestTrackingError(message);
+      await TrackingService._setLatestTrackingError(message);
     } catch (_) {
       // Keep the foreground service alive even if diagnostics cannot be saved.
     }

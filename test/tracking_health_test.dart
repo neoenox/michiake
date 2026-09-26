@@ -56,6 +56,19 @@ void main() {
     );
   });
 
+  test('does not report an error when diagnostic state is unavailable', () {
+    expect(
+      trackingStatusLabel(
+        serviceRunning: true,
+        locationStreamHealthy: null,
+        lastSuccessfulSampleAt: now.subtract(const Duration(minutes: 30)),
+        latestError: null,
+        now: now,
+      ),
+      '記録状態を確認中 · 最終保存 11:30',
+    );
+  });
+
   test('warns when successful samples have gone stale', () {
     expect(
       trackingStatusLabel(
