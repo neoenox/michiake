@@ -264,9 +264,15 @@ class ExplorationDb {
     final longitudePadding = longitudeScale < 1
         ? 180.0
         : paddingMeters / longitudeScale;
+    // Measure the span before wrapping: -180..180 covers the whole world.
+    final rawSpan = east - west;
+    final longitudeSpan = rawSpan.abs() >= 360 ? 360.0 : rawSpan % 360;
+    final coversAllLongitudes = longitudeSpan + 2 * longitudePadding >= 360;
     final minLon = _wrapLongitude(west - longitudePadding);
     final maxLon = _wrapLongitude(east + longitudePadding);
-    final longitudeFilter = minLon <= maxLon
+    final longitudeFilter = coversAllLongitudes
+        ? '1 = 1'
+        : minLon <= maxLon
         ? 'center_lon BETWEEN ? AND ?'
         : '(center_lon >= ? OR center_lon <= ?)';
     final rows = await db.rawQuery(
@@ -275,7 +281,7 @@ class ExplorationDb {
       WHERE center_lat BETWEEN ? AND ? AND $longitudeFilter
         AND center_lat IS NOT NULL AND center_lon IS NOT NULL
       ''',
-      [minLat, maxLat, minLon, maxLon],
+      [minLat, maxLat, if (!coversAllLongitudes) ...[minLon, maxLon]],
     );
     return rows.map((row) => row['cell_id']! as String).toList(growable: false);
   }
