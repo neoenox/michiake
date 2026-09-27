@@ -9,8 +9,7 @@ import 'tracking_engine.dart';
 
 class TrackingService {
   static const _serviceId = 8201;
-  static const _locationStreamHealthyKey =
-      'michiake_location_stream_healthy';
+  static const _locationStreamHealthyKey = 'michiake_location_stream_healthy';
   static const _latestTrackingErrorKey = 'michiake_latest_tracking_error';
 
   static Future<bool?> get locationStreamHealthy =>
@@ -63,6 +62,9 @@ class TrackingService {
 
   static Future<bool> start() async {
     if (await FlutterForegroundTask.isRunningService) return true;
+    // A newly requested service must not connect to points from a prior run,
+    // including writes that finished while the previous service was stopping.
+    await ExplorationDb().beginNewTrackingSegment();
     try {
       await _setLocationStreamHealthy(false);
       await _setLatestTrackingError(null);
@@ -83,6 +85,7 @@ class TrackingService {
     if (await FlutterForegroundTask.isRunningService) {
       await FlutterForegroundTask.stopService();
     }
+    await ExplorationDb().beginNewTrackingSegment();
     try {
       await _setLocationStreamHealthy(false);
     } catch (_) {
@@ -173,7 +176,8 @@ class _LocationTaskHandler extends TaskHandler {
   Future<void> _recordSample(GeoSample sample, int queuedRevision) async {
     try {
       final saved =
-          await _engine?.accept(sample, queuedRevision: queuedRevision) ?? false;
+          await _engine?.accept(sample, queuedRevision: queuedRevision) ??
+          false;
       if (saved) {
         await _recordHealth(true);
         await _clearError();
