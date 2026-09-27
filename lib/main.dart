@@ -298,7 +298,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   MapLibreMapController? _map;
   Timer? _refreshTimer;
   bool _tracking = false;
-  bool _locationStreamHealthy = false;
+  bool? _locationStreamHealthy;
   DateTime? _lastSuccessfulSampleAt;
   String? _latestTrackingError;
   bool _sourceReady = false;
@@ -348,15 +348,17 @@ class _MapHomeScreenState extends State<MapHomeScreen>
     String? latestError = databaseReadError;
     try {
       latestSavedAt = (await _db.latestSample())?.timestamp;
-      latestError ??= await _settings.latestTrackingError;
     } catch (_) {
-      latestError = '記録状態を確認できません';
+      latestError ??= '探索データベースを読み込めません';
     }
-    var streamHealthy = false;
+    bool? streamHealthy;
     try {
-      streamHealthy = await _settings.locationStreamHealthy;
+      latestError ??= await TrackingService.latestTrackingError;
+      streamHealthy = await TrackingService.locationStreamHealthy;
     } catch (_) {
-      latestError ??= '記録状態を確認できません';
+      // Tracking diagnostics are best-effort. Failure to read them must not be
+      // presented as a recording failure while the foreground service runs.
+      streamHealthy = null;
     }
     if (!mounted) return;
     setState(() {
@@ -364,7 +366,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       _tracking = running;
       _lastSuccessfulSampleAt = latestSavedAt;
       _latestTrackingError = latestError;
-      _locationStreamHealthy = running && streamHealthy;
+      _locationStreamHealthy = running ? streamHealthy : false;
     });
     await _refreshFog(force: forceFog);
   }
@@ -679,7 +681,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
 
   bool get _hasRecordingProblem =>
       _latestTrackingError != null ||
-      (!_locationStreamHealthy &&
+      (_locationStreamHealthy == false &&
           _lastSuccessfulSampleAt != null &&
           DateTime.now().difference(_lastSuccessfulSampleAt!) >
               trackingSampleStaleAfter);
@@ -786,7 +788,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   Future<void> _load() async {
     try {
       final latestSample = await _db.latestSample();
-      final latestError = await _settings.latestTrackingError;
+      final latestError = await TrackingService.latestTrackingError;
       final values = await Future.wait<Object>([
         TrackingService.isRunning,
         FlLocation.isLocationServicesEnabled,
