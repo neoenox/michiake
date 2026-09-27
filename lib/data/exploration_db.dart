@@ -36,7 +36,7 @@ class ExplorationDb {
         pathOverride ?? p.join(await getDatabasesPath(), 'michiake.db');
     return _database = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('''
@@ -84,6 +84,9 @@ class ExplorationDb {
             'ALTER TABLE tracking_state ADD COLUMN segment_id INTEGER NOT NULL DEFAULT 0',
           );
         }
+        if (oldVersion < 5) {
+          await _createLatestSampleIndexes(db);
+        }
       },
       onCreate: (db, _) async {
         await db.execute('''
@@ -119,6 +122,7 @@ class ExplorationDb {
           )
         ''');
         await db.execute('CREATE INDEX track_day_idx ON track_points(day_key)');
+        await _createLatestSampleIndexes(db);
         await db.execute('CREATE INDEX cell_day_idx ON cell_days(day_key)');
         await db.execute(
           'CREATE INDEX explored_center_idx ON explored_cells(center_lat, center_lon)',
@@ -132,6 +136,15 @@ class ExplorationDb {
         ''');
         await db.insert('tracking_state', {'id': 1, 'revision': 0});
       },
+    );
+  }
+
+  static Future<void> _createLatestSampleIndexes(Database db) async {
+    await db.execute(
+      'CREATE INDEX track_latest_idx ON track_points(recorded_at DESC, id DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX track_segment_latest_idx ON track_points(segment_id, recorded_at DESC, id DESC)',
     );
   }
 
@@ -210,7 +223,7 @@ class ExplorationDb {
     final rows = await (await database).query(
       'track_points',
       where: where,
-      orderBy: 'recorded_at DESC',
+      orderBy: 'recorded_at DESC, id DESC',
       limit: 1,
     );
     if (rows.isEmpty) return null;
