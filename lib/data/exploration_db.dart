@@ -5,6 +5,25 @@ import 'package:sqflite/sqflite.dart';
 import 'package:h3_flutter/h3_flutter.dart';
 
 import '../core/geo_sample.dart';
+import '../core/exploration_quest.dart';
+
+class DailyQuestProgress {
+  const DailyQuestProgress({
+    required this.dayKey,
+    required this.targetNewCells,
+    required this.newCellsToday,
+    required this.completedAt,
+    required this.cardId,
+  });
+
+  final String dayKey;
+  final int targetNewCells;
+  final int newCellsToday;
+  final int? completedAt;
+  final int? cardId;
+
+  bool get isComplete => completedAt != null;
+}
 
 class HistoryDay {
   const HistoryDay({
@@ -36,7 +55,7 @@ class ExplorationDb {
         pathOverride ?? p.join(await getDatabasesPath(), 'michiake.db');
     return _database = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('''
@@ -87,6 +106,7 @@ class ExplorationDb {
         if (oldVersion < 5) {
           await _createLatestSampleIndexes(db);
         }
+        if (oldVersion < 6) await _createQuestTables(db);
       },
       onCreate: (db, _) async {
         await db.execute('''
@@ -135,6 +155,7 @@ class ExplorationDb {
           )
         ''');
         await db.insert('tracking_state', {'id': 1, 'revision': 0});
+        await _createQuestTables(db);
       },
     );
   }
@@ -146,6 +167,92 @@ class ExplorationDb {
     await db.execute(
       'CREATE INDEX track_segment_latest_idx ON track_points(segment_id, recorded_at DESC, id DESC)',
     );
+  }
+
+  static Future<void> _createQuestTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE daily_quests (
+        day_key TEXT PRIMARY KEY,
+        target_new_cells INTEGER NOT NULL,
+        completed_at INTEGER,
+        card_id INTEGER
+      )
+    ''');
+  }
+
+  Future<void> startDailyQuest({
+    required String dayKey,
+    required int targetNewCells,
+  }) async {
+    await (await database).insert('daily_quests', {
+      'day_key': dayKey,
+      'target_new_cells': targetNewCells,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  Future<DailyQuestProgress?> updateDailyQuestProgress({
+    required String dayKey,
+    required int newCellsToday,
+  }) async {
+    final db = await database;
+    DailyQuestProgress? progress;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'daily_quests',
+        where: 'day_key = ?',
+        whereArgs: [dayKey],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+
+      final row = rows.single;
+      final target = row['target_new_cells']! as int;
+      var completedAt = row['completed_at'] as int?;
+      var cardId = row['card_id'] as int?;
+      if (completedAt == null && newCellsToday >= target) {
+        final earnedRows = await txn.query(
+          'daily_quests',
+          columns: ['card_id'],
+          where: 'card_id IS NOT NULL',
+        );
+        final earnedIds = earnedRows
+            .map((earned) => earned['card_id']! as int)
+            .toSet();
+        int? nextCard;
+        for (final card in discoveryCardCatalog) {
+          if (!earnedIds.contains(card.id)) {
+            nextCard = card.id;
+            break;
+          }
+        }
+        completedAt = DateTime.now().millisecondsSinceEpoch;
+        cardId = nextCard;
+        await txn.update(
+          'daily_quests',
+          {'completed_at': completedAt, 'card_id': cardId},
+          where: 'day_key = ?',
+          whereArgs: [dayKey],
+        );
+      }
+
+      progress = DailyQuestProgress(
+        dayKey: dayKey,
+        targetNewCells: target,
+        newCellsToday: newCellsToday,
+        completedAt: completedAt,
+        cardId: cardId,
+      );
+    });
+    return progress;
+  }
+
+  Future<Set<int>> get earnedDiscoveryCardIds async {
+    final rows = await (await database).query(
+      'daily_quests',
+      columns: ['card_id'],
+      where: 'card_id IS NOT NULL',
+    );
+    return rows.map((row) => row['card_id']! as int).toSet();
   }
 
   Future<bool> recordSample({
@@ -294,7 +401,11 @@ class ExplorationDb {
       WHERE center_lat BETWEEN ? AND ? AND $longitudeFilter
         AND center_lat IS NOT NULL AND center_lon IS NOT NULL
       ''',
-      [minLat, maxLat, if (!coversAllLongitudes) ...[minLon, maxLon]],
+      [
+        minLat,
+        maxLat,
+        if (!coversAllLongitudes) ...[minLon, maxLon],
+      ],
     );
     return rows.map((row) => row['cell_id']! as String).toList(growable: false);
   }
@@ -398,6 +509,7 @@ class ExplorationDb {
       await txn.delete('cell_days');
       await txn.delete('explored_cells');
       await txn.delete('track_points');
+      await txn.delete('daily_quests');
       await txn.rawUpdate(
         'UPDATE tracking_state SET revision = revision + 1, segment_id = segment_id + 1 WHERE id = 1',
       );
