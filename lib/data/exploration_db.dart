@@ -36,7 +36,7 @@ class ExplorationDb {
         pathOverride ?? p.join(await getDatabasesPath(), 'michiake.db');
     return _database = await openDatabase(
       path,
-      version: 3,
+      version: 5,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('''
@@ -76,6 +76,17 @@ class ExplorationDb {
             'CREATE INDEX explored_center_idx ON explored_cells(center_lat, center_lon)',
           );
         }
+        if (oldVersion < 4) {
+          await db.execute(
+            'ALTER TABLE track_points ADD COLUMN segment_id INTEGER NOT NULL DEFAULT 0',
+          );
+          await db.execute(
+            'ALTER TABLE tracking_state ADD COLUMN segment_id INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+        if (oldVersion < 5) {
+          await _createLatestSampleIndexes(db);
+        }
       },
       onCreate: (db, _) async {
         await db.execute('''
@@ -106,10 +117,12 @@ class ExplorationDb {
             speed REAL NOT NULL,
             recorded_at INTEGER NOT NULL,
             day_key TEXT NOT NULL,
-            segment_distance_m REAL NOT NULL
+            segment_distance_m REAL NOT NULL,
+            segment_id INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('CREATE INDEX track_day_idx ON track_points(day_key)');
+        await _createLatestSampleIndexes(db);
         await db.execute('CREATE INDEX cell_day_idx ON cell_days(day_key)');
         await db.execute(
           'CREATE INDEX explored_center_idx ON explored_cells(center_lat, center_lon)',
@@ -117,11 +130,21 @@ class ExplorationDb {
         await db.execute('''
           CREATE TABLE tracking_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            revision INTEGER NOT NULL
+            revision INTEGER NOT NULL,
+            segment_id INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.insert('tracking_state', {'id': 1, 'revision': 0});
       },
+    );
+  }
+
+  static Future<void> _createLatestSampleIndexes(Database db) async {
+    await db.execute(
+      'CREATE INDEX track_latest_idx ON track_points(recorded_at DESC, id DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX track_segment_latest_idx ON track_points(segment_id, recorded_at DESC, id DESC)',
     );
   }
 
@@ -136,14 +159,16 @@ class ExplorationDb {
     final stamp = sample.timestamp.millisecondsSinceEpoch;
     var recorded = false;
     await db.transaction((txn) async {
-      final revision = Sqflite.firstIntValue(
-        await txn.query(
-          'tracking_state',
-          columns: ['revision'],
-          where: 'id = 1',
-        ),
+      final stateRows = await txn.query(
+        'tracking_state',
+        columns: ['revision', 'segment_id'],
+        where: 'id = 1',
       );
+      if (stateRows.isEmpty) return;
+      final state = stateRows.first;
+      final revision = state['revision']! as int;
       if (revision != expectedRevision) return;
+      final segmentId = state['segment_id']! as int;
       await txn.insert('track_points', {
         'latitude': sample.latitude,
         'longitude': sample.longitude,
@@ -153,6 +178,7 @@ class ExplorationDb {
         'recorded_at': stamp,
         'day_key': day,
         'segment_distance_m': segmentDistanceMeters,
+        'segment_id': segmentId,
       });
       for (final entry in cells.entries) {
         final center = _cellCenter(entry.key, sample);
@@ -186,9 +212,18 @@ class ExplorationDb {
       0;
 
   Future<GeoSample?> latestSample() async {
+    return _latestSample();
+  }
+
+  Future<GeoSample?> latestSampleInCurrentSegment() => _latestSample(
+    where: 'segment_id = (SELECT segment_id FROM tracking_state WHERE id = 1)',
+  );
+
+  Future<GeoSample?> _latestSample({String? where}) async {
     final rows = await (await database).query(
       'track_points',
-      orderBy: 'recorded_at DESC',
+      where: where,
+      orderBy: 'recorded_at DESC, id DESC',
       limit: 1,
     );
     if (rows.isEmpty) return null;
@@ -222,20 +257,35 @@ class ExplorationDb {
     // Pad by 25 m to include cells whose polygons overlap the viewport.
     const paddingMeters = 25.0;
     const metersPerLatitudeDegree = 111320.0;
-    final minLat = (south - paddingMeters / metersPerLatitudeDegree)
-        .clamp(-90.0, 90.0);
-    final maxLat = (north + paddingMeters / metersPerLatitudeDegree)
-        .clamp(-90.0, 90.0);
+    final minLat = (south - paddingMeters / metersPerLatitudeDegree).clamp(
+      -90.0,
+      90.0,
+    );
+    final maxLat = (north + paddingMeters / metersPerLatitudeDegree).clamp(
+      -90.0,
+      90.0,
+    );
     final longitudeScale =
-        metersPerLatitudeDegree * math.cos(
-          (south.abs() > north.abs() ? south.abs() : north.abs()) * math.pi / 180,
-        ).abs();
+        metersPerLatitudeDegree *
+        math
+            .cos(
+              (south.abs() > north.abs() ? south.abs() : north.abs()) *
+                  math.pi /
+                  180,
+            )
+            .abs();
     final longitudePadding = longitudeScale < 1
         ? 180.0
         : paddingMeters / longitudeScale;
+    // Measure the span before wrapping: -180..180 covers the whole world.
+    final rawSpan = east - west;
+    final longitudeSpan = rawSpan.abs() >= 360 ? 360.0 : rawSpan % 360;
+    final coversAllLongitudes = longitudeSpan + 2 * longitudePadding >= 360;
     final minLon = _wrapLongitude(west - longitudePadding);
     final maxLon = _wrapLongitude(east + longitudePadding);
-    final longitudeFilter = minLon <= maxLon
+    final longitudeFilter = coversAllLongitudes
+        ? '1 = 1'
+        : minLon <= maxLon
         ? 'center_lon BETWEEN ? AND ?'
         : '(center_lon >= ? OR center_lon <= ?)';
     final rows = await db.rawQuery(
@@ -244,7 +294,7 @@ class ExplorationDb {
       WHERE center_lat BETWEEN ? AND ? AND $longitudeFilter
         AND center_lat IS NOT NULL AND center_lon IS NOT NULL
       ''',
-      [minLat, maxLat, minLon, maxLon],
+      [minLat, maxLat, if (!coversAllLongitudes) ...[minLon, maxLon]],
     );
     return rows.map((row) => row['cell_id']! as String).toList(growable: false);
   }
@@ -337,7 +387,7 @@ class ExplorationDb {
         )
       ''');
       await txn.rawUpdate(
-        'UPDATE tracking_state SET revision = revision + 1 WHERE id = 1',
+        'UPDATE tracking_state SET revision = revision + 1, segment_id = segment_id + 1 WHERE id = 1',
       );
     });
   }
@@ -348,7 +398,17 @@ class ExplorationDb {
       await txn.delete('cell_days');
       await txn.delete('explored_cells');
       await txn.delete('track_points');
+      await txn.rawUpdate(
+        'UPDATE tracking_state SET revision = revision + 1, segment_id = segment_id + 1 WHERE id = 1',
+      );
     });
+  }
+
+  Future<void> beginNewTrackingSegment() async {
+    final db = await database;
+    await db.rawUpdate(
+      'UPDATE tracking_state SET revision = revision + 1, segment_id = segment_id + 1 WHERE id = 1',
+    );
   }
 
   Future<int> get trackPointCount async =>

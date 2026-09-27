@@ -34,6 +34,31 @@ void main() {
   });
 
   test(
+    'a stopped tracking session does not bridge into its next session',
+    () async {
+      final db = ExplorationDb(pathOverride: inMemoryDatabasePath);
+      final firstSession = TrackingEngine(db, coverage: _FakeCoverage());
+      await firstSession.initialize();
+      await firstSession.accept(
+        _sample(35, 139, DateTime.utc(2026, 1, 1, 9)),
+        queuedRevision: await db.trackingRevision,
+      );
+
+      await db.beginNewTrackingSegment();
+      final resumedSession = TrackingEngine(db, coverage: _FakeCoverage());
+      await resumedSession.initialize();
+      await resumedSession.accept(
+        _sample(35, 139.01, DateTime.utc(2026, 1, 1, 9, 1)),
+        queuedRevision: await db.trackingRevision,
+      );
+
+      expect((await db.totalsFor(DateTime(2026, 1, 1)))['distance_m'], 0);
+      expect(await db.trackPointCount, 2);
+      await (await db.database).close();
+    },
+  );
+
+  test(
     'a queued write from before undo cannot reinsert deleted points',
     () async {
       final db = ExplorationDb(pathOverride: inMemoryDatabasePath);
@@ -54,22 +79,25 @@ void main() {
     },
   );
 
-  test('a sample queued before undo is discarded when it runs afterward', () async {
-    final db = ExplorationDb(pathOverride: inMemoryDatabasePath);
-    final engine = TrackingEngine(db, coverage: _FakeCoverage());
-    await engine.initialize();
-    final queuedRevision = await db.trackingRevision;
-    await db.undoDay('2026-01-01');
+  test(
+    'a sample queued before undo is discarded when it runs afterward',
+    () async {
+      final db = ExplorationDb(pathOverride: inMemoryDatabasePath);
+      final engine = TrackingEngine(db, coverage: _FakeCoverage());
+      await engine.initialize();
+      final queuedRevision = await db.trackingRevision;
+      await db.undoDay('2026-01-01');
 
-    await engine.accept(
-      _sample(35, 139, DateTime.utc(2026, 1, 1, 9)),
-      queuedRevision: queuedRevision,
-    );
+      await engine.accept(
+        _sample(35, 139, DateTime.utc(2026, 1, 1, 9)),
+        queuedRevision: queuedRevision,
+      );
 
-    expect(await db.trackPointCount, 0);
-    expect(await db.exploredCellCount, 0);
-    await (await db.database).close();
-  });
+      expect(await db.trackPointCount, 0);
+      expect(await db.exploredCellCount, 0);
+      await (await db.database).close();
+    },
+  );
 }
 
 GeoSample _sample(double lat, double lon, DateTime time) => GeoSample(

@@ -306,6 +306,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   bool _fogLayerInitializing = false;
   bool _mapProblem = false;
   int? _fogCellCount;
+  int? _fogRevision;
   String? _fogViewportKey;
   bool _fogRefreshing = false;
   bool _fogRefreshQueued = false;
@@ -392,10 +393,14 @@ class _MapHomeScreenState extends State<MapHomeScreen>
             '${bounds.southwest.longitude.toStringAsFixed(4)},'
             '${bounds.northeast.latitude.toStringAsFixed(4)},'
             '${bounds.northeast.longitude.toStringAsFixed(4)}';
+        // Undo can replace cell identities without changing the total count.
+        // Read the revision first so a concurrent deletion is retried next time.
+        final revision = await _db.trackingRevision;
         final cellCount = await _db.exploredCellCount;
         if (!refreshForce &&
             !queuedForce &&
             _fogCellCount == cellCount &&
+            _fogRevision == revision &&
             _fogViewportKey == viewportKey) {
           refreshForce = false;
           continue;
@@ -417,6 +422,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
           ),
         );
         _fogCellCount = cellCount;
+        _fogRevision = revision;
         _fogViewportKey = viewportKey;
         refreshForce = false;
       } while (_fogRefreshQueued && mounted);

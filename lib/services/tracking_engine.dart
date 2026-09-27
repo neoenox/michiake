@@ -18,13 +18,10 @@ class TrackingEngine {
 
   Future<void> initialize() async {
     _revision = await _db.trackingRevision;
-    _previous = await _db.latestSample();
+    _previous = await _db.latestSampleInCurrentSegment();
   }
 
-  Future<bool> accept(
-    GeoSample sample, {
-    required int queuedRevision,
-  }) async {
+  Future<bool> accept(GeoSample sample, {required int queuedRevision}) async {
     final currentRevision = await _db.trackingRevision;
     if (currentRevision != queuedRevision) {
       _revision = currentRevision;
