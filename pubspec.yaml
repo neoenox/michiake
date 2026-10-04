@@ -44,6 +44,8 @@ dependencies:
   app_settings: ^9.0.0
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 

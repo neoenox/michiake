@@ -46,15 +46,48 @@ class ExplorationDb {
 
   final String? pathOverride;
   Database? _database;
+  Future<Database>? _opening;
+  // Dart statics are isolate-local. Share one connection among screens, but
+  // never share a native transaction with the foreground service isolate.
+  static Future<Database>? _defaultOpening;
   H3? _h3;
   H3 get _h3Api => _h3 ??= const H3Factory().load();
 
-  Future<Database> get database async {
-    if (_database case final db?) return db;
+  Future<Database> get database => _getDatabase();
+
+  Future<Database> _getDatabase() async {
+    if (_database case final db? when db.isOpen) return db;
+    final pending = _opening ??= pathOverride == null
+        ? (_defaultOpening ??= _openDatabase())
+        : _openDatabase();
+    try {
+      final db = await pending;
+      if (!db.isOpen) {
+        _opening = null;
+        if (identical(_defaultOpening, pending)) _defaultOpening = null;
+        return _getDatabase();
+      }
+      return _database = db;
+    } catch (_) {
+      _opening = null;
+      if (identical(_defaultOpening, pending)) _defaultOpening = null;
+      rethrow;
+    }
+  }
+
+  Future<Database> _openDatabase() async {
     final path =
         pathOverride ?? p.join(await getDatabasesPath(), 'michiake.db');
-    return _database = await openDatabase(
+    return openDatabase(
       path,
+      // Native single-instance recovery rolls back an active transaction when
+      // another Flutter isolate opens the same path after the UI is recreated.
+      singleInstance: false,
+      onConfigure: (db) async {
+        // Readers must remain available while the service commits a location.
+        await db.rawQuery('PRAGMA journal_mode=WAL');
+        await db.rawQuery('PRAGMA busy_timeout=5000');
+      },
       version: 6,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
