@@ -1,10 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:michiake/main.dart';
+import 'package:michiake/settings/tracking_settings.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/types.dart';
 
 void main() {
+  test(
+    'folded quest preference survives a settings instance restart',
+    () async {
+      SharedPreferencesAsyncPlatform.instance = _EmptyPreferences();
+      expect(await TrackingSettings().questPanelExpanded, isTrue);
+      await TrackingSettings().setQuestPanelExpanded(false);
+      expect(await TrackingSettings().questPanelExpanded, isFalse);
+      await TrackingSettings().setQuestPanelExpanded(true);
+      expect(await TrackingSettings().questPanelExpanded, isTrue);
+    },
+  );
   testWidgets('shows onboarding before tracking starts', (tester) async {
     SharedPreferencesAsyncPlatform.instance = _EmptyPreferences();
     await tester.pumpWidget(const MichiakeApp());
@@ -68,7 +80,9 @@ void main() {
     expect(preferences.values['onboarding_completed'], isTrue);
   });
 
-  testWidgets('preference failure still shows a retryable error', (tester) async {
+  testWidgets('preference failure still shows a retryable error', (
+    tester,
+  ) async {
     SharedPreferencesAsyncPlatform.instance = _FailingPreferences();
     await tester.pumpWidget(
       MaterialApp(

@@ -300,6 +300,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   final _coverage = ExplorationCoverage();
   MapLibreMapController? _map;
   Timer? _refreshTimer;
+  bool _questExpanded = false;
   bool _tracking = false;
   bool? _locationStreamHealthy;
   DateTime? _lastSuccessfulSampleAt;
@@ -322,11 +323,31 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadQuestPanelPreference();
     _refresh();
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 20),
       (_) => _refresh(),
     );
+  }
+
+  Future<void> _loadQuestPanelPreference() async {
+    var expanded = true;
+    try {
+      expanded = await _settings.questPanelExpanded;
+    } catch (_) {
+      // Preferences must not prevent viewing the map.
+    }
+    if (mounted) setState(() => _questExpanded = expanded);
+  }
+
+  Future<void> _setQuestPanelExpanded(bool expanded) async {
+    setState(() => _questExpanded = expanded);
+    try {
+      await _settings.setQuestPanelExpanded(expanded);
+    } catch (_) {
+      if (mounted) _showMessage('表示設定を保存できませんでした。');
+    }
   }
 
   @override
@@ -657,6 +678,8 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                   left: 12,
                   right: 12,
                   child: ExplorationQuestPanel(
+                    initialExpanded: _questExpanded,
+                    onExpandedChanged: _setQuestPanelExpanded,
                     quest: _dailyQuest,
                     collectedCardCount: _earnedDiscoveryCardIds.length,
                     onChooseQuest: _chooseDailyQuest,
