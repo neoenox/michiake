@@ -3,6 +3,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 class TrackingSettings {
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
 
+  Future<bool> get questPanelExpanded async =>
+      await _preferences.getBool('quest_panel_expanded') ?? true;
+
+  Future<void> setQuestPanelExpanded(bool value) =>
+      _preferences.setBool('quest_panel_expanded', value);
+
   Future<bool> get onboardingCompleted async =>
       await _preferences.getBool('onboarding_completed') ?? false;
 
@@ -14,5 +20,4 @@ class TrackingSettings {
 
   Future<void> setAutoTrackingEnabled(bool value) =>
       _preferences.setBool('auto_tracking_enabled', value);
-
 }

@@ -8,11 +8,14 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'core/exploration_coverage.dart';
+import 'core/exploration_quest.dart';
 import 'core/tracking_health.dart';
 import 'data/exploration_db.dart';
+import 'screens/discovery_collection_screen.dart';
 import 'services/tracking_service.dart';
 import 'settings/tracking_settings.dart';
 import 'web_preview_screen.dart';
+import 'widgets/exploration_quest_panel.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -297,6 +300,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   final _coverage = ExplorationCoverage();
   MapLibreMapController? _map;
   Timer? _refreshTimer;
+  bool _questExpanded = false;
   bool _tracking = false;
   bool? _locationStreamHealthy;
   DateTime? _lastSuccessfulSampleAt;
@@ -312,16 +316,38 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   bool _fogRefreshQueued = false;
   bool _forceFogRefreshQueued = false;
   Map<String, num> _totals = const {};
+  DailyQuestProgress? _dailyQuest;
+  Set<int> _earnedDiscoveryCardIds = const {};
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadQuestPanelPreference();
     _refresh();
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 20),
       (_) => _refresh(),
     );
+  }
+
+  Future<void> _loadQuestPanelPreference() async {
+    var expanded = true;
+    try {
+      expanded = await _settings.questPanelExpanded;
+    } catch (_) {
+      // Preferences must not prevent viewing the map.
+    }
+    if (mounted) setState(() => _questExpanded = expanded);
+  }
+
+  Future<void> _setQuestPanelExpanded(bool expanded) async {
+    setState(() => _questExpanded = expanded);
+    try {
+      await _settings.setQuestPanelExpanded(expanded);
+    } catch (_) {
+      if (mounted) _showMessage('表示設定を保存できませんでした。');
+    }
   }
 
   @override
@@ -339,8 +365,16 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   Future<void> _refresh({bool forceFog = false}) async {
     var totals = _totals;
     String? databaseReadError;
+    DailyQuestProgress? dailyQuest;
+    var earnedDiscoveryCardIds = _earnedDiscoveryCardIds;
+    final now = DateTime.now();
     try {
-      totals = await _db.totalsFor(DateTime.now());
+      totals = await _db.totalsFor(now);
+      dailyQuest = await _db.updateDailyQuestProgress(
+        dayKey: ExplorationDb.dayKey(now),
+        newCellsToday: (totals['new_cells'] ?? 0).toInt(),
+      );
+      earnedDiscoveryCardIds = await _db.earnedDiscoveryCardIds;
     } catch (_) {
       databaseReadError = '探索データベースを読み込めません';
     }
@@ -368,8 +402,51 @@ class _MapHomeScreenState extends State<MapHomeScreen>
       _lastSuccessfulSampleAt = latestSavedAt;
       _latestTrackingError = latestError;
       _locationStreamHealthy = running ? streamHealthy : false;
+      _dailyQuest = dailyQuest;
+      _earnedDiscoveryCardIds = earnedDiscoveryCardIds;
     });
     await _refreshFog(force: forceFog);
+  }
+
+  Future<void> _chooseDailyQuest() async {
+    final option = await showModalBottomSheet<ExplorationQuestOption>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  '今日の依頼を選ぶ',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              for (final option in explorationQuestOptions)
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome),
+                  title: Text(option.title),
+                  subtitle: Text(option.description),
+                  onTap: () => Navigator.pop(context, option),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (option == null || !mounted) return;
+    try {
+      await _db.startDailyQuest(
+        dayKey: ExplorationDb.dayKey(DateTime.now()),
+        targetNewCells: option.targetNewCells,
+      );
+      await _refresh();
+    } catch (_) {
+      if (mounted) _showMessage('探索依頼を保存できませんでした。もう一度お試しください。');
+    }
   }
 
   Future<void> _refreshFog({bool force = false}) async {
@@ -590,10 +667,29 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                   onCameraIdle: () => _refreshFog(force: true),
                 ),
                 if (_mapProblem)
-                  const Align(
-                    alignment: Alignment.topCenter,
+                  const Positioned(
+                    top: 124,
+                    left: 16,
+                    right: 16,
                     child: _HintBanner(text: '地図レイヤーを読み込めませんでした'),
                   ),
+                Positioned(
+                  top: 8,
+                  left: 12,
+                  right: 12,
+                  child: ExplorationQuestPanel(
+                    initialExpanded: _questExpanded,
+                    onExpandedChanged: _setQuestPanelExpanded,
+                    quest: _dailyQuest,
+                    collectedCardCount: _earnedDiscoveryCardIds.length,
+                    onChooseQuest: _chooseDailyQuest,
+                    onOpenCollection: () => _open(
+                      DiscoveryCollectionScreen(
+                        earnedCardIds: _earnedDiscoveryCardIds,
+                      ),
+                    ),
+                  ),
+                ),
                 Positioned(
                   left: 16,
                   right: 16,
