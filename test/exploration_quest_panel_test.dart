@@ -24,4 +24,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('依頼を選ぶ'), findsOneWidget);
   });
+
+  testWidgets('quest panel can be dismissed without removing its quest', (tester) async {
+    var dismissCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ExplorationQuestPanel(
+            quest: null,
+            collectedCardCount: 0,
+            onChooseQuest: () {},
+            onOpenCollection: () {},
+            onDismiss: () => dismissCount++,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('地図から隠す'), findsOneWidget);
+    await tester.tap(find.text('地図から隠す'));
+    expect(dismissCount, 1);
+    // The parent owns visibility. This component only requests dismissal.
+    await tester.tap(find.byTooltip('探索依頼を折りたたむ'));
+    await tester.pumpAndSettle();
+    expect(find.text('地図から隠す'), findsNothing);
+  });
 }
