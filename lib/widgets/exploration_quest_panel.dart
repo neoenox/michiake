@@ -11,6 +11,7 @@ class ExplorationQuestPanel extends StatefulWidget {
     required this.onOpenCollection,
     this.initialExpanded = true,
     this.onExpandedChanged,
+    this.onDismiss,
     super.key,
   });
 
@@ -20,6 +21,7 @@ class ExplorationQuestPanel extends StatefulWidget {
   final VoidCallback onOpenCollection;
   final bool initialExpanded;
   final ValueChanged<bool>? onExpandedChanged;
+  final VoidCallback? onDismiss;
 
   @override
   State<ExplorationQuestPanel> createState() => _ExplorationQuestPanelState();
@@ -128,6 +130,14 @@ class _ExplorationQuestPanelState extends State<ExplorationQuestPanel> {
                 style: theme.textTheme.bodySmall,
               ),
             ],
+            if (_expanded && widget.onDismiss != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: widget.onDismiss,
+                  child: const Text('地図から隠す'),
+                ),
+              ),
           ],
         ),
       ),

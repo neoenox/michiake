@@ -3,6 +3,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 class TrackingSettings {
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
 
+  Future<bool> get questPanelVisible async =>
+      await _preferences.getBool('quest_panel_visible') ?? true;
+
+  Future<void> setQuestPanelVisible(bool value) =>
+      _preferences.setBool('quest_panel_visible', value);
+
   Future<bool> get questPanelExpanded async =>
       await _preferences.getBool('quest_panel_expanded') ?? true;
 
