@@ -301,6 +301,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   MapLibreMapController? _map;
   Timer? _refreshTimer;
   bool _questExpanded = false;
+  bool _questVisible = true;
   bool _tracking = false;
   bool? _locationStreamHealthy;
   DateTime? _lastSuccessfulSampleAt;
@@ -333,12 +334,28 @@ class _MapHomeScreenState extends State<MapHomeScreen>
 
   Future<void> _loadQuestPanelPreference() async {
     var expanded = true;
+    var visible = true;
     try {
       expanded = await _settings.questPanelExpanded;
+      visible = await _settings.questPanelVisible;
     } catch (_) {
       // Preferences must not prevent viewing the map.
     }
-    if (mounted) setState(() => _questExpanded = expanded);
+    if (mounted) {
+      setState(() {
+        _questExpanded = expanded;
+        _questVisible = visible;
+      });
+    }
+  }
+
+  Future<void> _setQuestPanelVisible(bool visible) async {
+    setState(() => _questVisible = visible);
+    try {
+      await _settings.setQuestPanelVisible(visible);
+    } catch (_) {
+      if (mounted) _showMessage('表示設定を保存できませんでした。');
+    }
   }
 
   Future<void> _setQuestPanelExpanded(bool expanded) async {
@@ -677,18 +694,28 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                   top: 8,
                   left: 12,
                   right: 12,
-                  child: ExplorationQuestPanel(
-                    initialExpanded: _questExpanded,
-                    onExpandedChanged: _setQuestPanelExpanded,
-                    quest: _dailyQuest,
-                    collectedCardCount: _earnedDiscoveryCardIds.length,
-                    onChooseQuest: _chooseDailyQuest,
-                    onOpenCollection: () => _open(
-                      DiscoveryCollectionScreen(
-                        earnedCardIds: _earnedDiscoveryCardIds,
-                      ),
-                    ),
-                  ),
+                  child: _questVisible
+                      ? ExplorationQuestPanel(
+                          initialExpanded: _questExpanded,
+                          onExpandedChanged: _setQuestPanelExpanded,
+                          onDismiss: () => _setQuestPanelVisible(false),
+                          quest: _dailyQuest,
+                          collectedCardCount: _earnedDiscoveryCardIds.length,
+                          onChooseQuest: _chooseDailyQuest,
+                          onOpenCollection: () => _open(
+                            DiscoveryCollectionScreen(
+                              earnedCardIds: _earnedDiscoveryCardIds,
+                            ),
+                          ),
+                        )
+                      : Align(
+                          alignment: Alignment.centerRight,
+                          child: IconButton.filledTonal(
+                            tooltip: '探索依頼を再表示',
+                            onPressed: () => _setQuestPanelVisible(true),
+                            icon: const Icon(Icons.auto_awesome_outlined),
+                          ),
+                        ),
                 ),
                 Positioned(
                   left: 16,
