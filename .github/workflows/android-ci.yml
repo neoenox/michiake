@@ -38,6 +38,14 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Run database durability integration test on Android emulator
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          script: flutter test integration_test/durable_reopen_regression_test.dart
+
       - name: Build debug APK
         run: flutter build apk --debug
 
