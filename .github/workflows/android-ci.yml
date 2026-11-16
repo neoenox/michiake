@@ -44,12 +44,38 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
-          emulator-boot-timeout: 900
-          disable-animations: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -no-metrics
+          emulator-boot-timeout: 1200
+          disable-animations: true
           script: |
             adb shell settings put secure location_mode 3
             flutter build apk --debug
-            adb install -r build/app/outputs/flutter-apk/app-debug.apk
+            # Wait for Package Manager to become responsive after emulator boot.
+            package_manager_ready=0
+            for attempt in 1 2 3 4 5 6; do
+              if adb shell cmd package list packages >/dev/null 2>&1; then
+                package_manager_ready=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$package_manager_ready" -ne 1 ]; then
+              echo "Android Package Manager did not become responsive." >&2
+              exit 1
+            fi
+            install_succeeded=0
+            for attempt in 1 2 3; do
+              if adb install -r build/app/outputs/flutter-apk/app-debug.apk; then
+                install_succeeded=1
+                break
+              fi
+              echo "APK installation attempt $attempt failed; retrying." >&2
+              sleep 10
+            done
+            if [ "$install_succeeded" -ne 1 ]; then
+              echo "APK installation failed after retries." >&2
+              exit 1
+            fi
             adb shell pm grant jp.neoenox.michiake android.permission.ACCESS_COARSE_LOCATION
             adb shell pm grant jp.neoenox.michiake android.permission.ACCESS_FINE_LOCATION
             adb shell pm grant jp.neoenox.michiake android.permission.POST_NOTIFICATIONS
