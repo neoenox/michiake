@@ -39,6 +39,7 @@ jobs:
         run: flutter test
 
       - name: Run foreground-location permission test on Android emulator
+        timeout-minutes: 35
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 35
@@ -51,13 +52,13 @@ jobs:
             adb shell settings put secure location_mode 3
             flutter build apk --debug
             # Wait briefly for Package Manager after the slow emulator boot.
-            adb shell cmd package list packages >/dev/null 2>&1 || sleep 10
-            adb shell cmd package list packages >/dev/null 2>&1
-            adb install -r build/app/outputs/flutter-apk/app-debug.apk || (sleep 10 && adb install -r build/app/outputs/flutter-apk/app-debug.apk)
+            timeout 30s adb shell cmd package list packages >/dev/null 2>&1 || sleep 10
+            timeout 30s adb shell cmd package list packages >/dev/null 2>&1
+            timeout 120s adb install -r build/app/outputs/flutter-apk/app-debug.apk || (sleep 10 && timeout 120s adb install -r build/app/outputs/flutter-apk/app-debug.apk)
             adb shell pm grant jp.neoenox.michiake android.permission.ACCESS_COARSE_LOCATION
             adb shell pm grant jp.neoenox.michiake android.permission.ACCESS_FINE_LOCATION
             adb shell pm grant jp.neoenox.michiake android.permission.POST_NOTIFICATIONS
-            flutter test integration_test/location_foreground_permission_test.dart
+            timeout 300s flutter test integration_test/location_foreground_permission_test.dart
 
       - name: Build debug APK
         run: flutter build apk --debug
