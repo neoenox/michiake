@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # Pin the host image while ubuntu-26.04 ADB/emulator startup is unstable.
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -37,6 +38,21 @@ jobs:
 
       - name: Run tests
         run: flutter test
+
+      - name: Validate foreground-location emulator script
+        run: bash -n .github/scripts/run-foreground-location-permission-test.sh
+
+      - name: Run foreground-location permission test on Android emulator
+        timeout-minutes: 35
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -no-metrics
+          emulator-boot-timeout: 1200
+          disable-animations: true
+          script: bash .github/scripts/run-foreground-location-permission-test.sh
 
       - name: Build debug APK
         run: flutter build apk --debug

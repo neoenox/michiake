@@ -9,6 +9,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'core/exploration_coverage.dart';
 import 'core/exploration_quest.dart';
+import 'core/location_permission_policy.dart';
 import 'core/tracking_health.dart';
 import 'data/exploration_db.dart';
 import 'screens/discovery_collection_screen.dart';
@@ -72,7 +73,7 @@ class _StartupGateState extends State<_StartupGate> {
   Future<void> _startIfAllowed() async {
     try {
       final permission = await FlLocation.checkLocationPermission();
-      if (permission == LocationPermission.always &&
+      if (canStartLocationTracking(permission) &&
           await FlLocation.isLocationServicesEnabled) {
         await TrackingService.start();
       }
@@ -116,25 +117,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         setState(() => _message = '端末の位置情報をオンにしてください。');
         return;
       }
-      var permission = widget.startTracking == null
+      final permission = widget.startTracking == null
           ? await FlLocation.checkLocationPermission()
           : LocationPermission.always;
-      if (widget.startTracking == null &&
-          (permission == LocationPermission.denied ||
-              permission == LocationPermission.deniedForever)) {
-        permission = await FlLocation.requestLocationPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        setState(() => _message = '位置情報の許可が必要です。設定から許可してください。');
-        return;
-      }
-      if (widget.startTracking == null &&
-          permission == LocationPermission.whileInUse) {
-        permission = await FlLocation.requestLocationPermission();
-      }
-      if (permission != LocationPermission.always) {
-        setState(() => _message = '画面を閉じた後も探索するには、アプリの位置情報を「常に許可」にしてください。');
+      final grantedPermission =
+          widget.startTracking == null &&
+                  (permission == LocationPermission.denied ||
+                      permission == LocationPermission.deniedForever)
+              ? await FlLocation.requestLocationPermission()
+              : permission;
+      if (!canStartLocationTracking(grantedPermission)) {
+        setState(
+          () => _message = '位置情報の許可が必要です。アプリの使用中のみ許可してください。',
+        );
         await AppSettings.openAppSettings(type: AppSettingsType.settings);
         return;
       }
@@ -206,8 +201,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 12),
               const _InfoCard(
                 icon: Icons.notifications_active_outlined,
-                title: 'バックグラウンドでも探索',
-                body: '画面を閉じても続けるため、位置情報の「常に許可」と探索中の通知を使います。あとから設定で停止できます。',
+                title: '通知を表示して位置情報を記録',
+                body: 'アプリを開いて探索を開始すると、通知を表示する位置情報 Foreground Service が記録を続けます。位置情報は「アプリの使用中のみ許可」で開始できます。あとから設定で停止できます。',
               ),
               if (_message != null) ...[
                 const SizedBox(height: 16),
