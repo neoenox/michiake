@@ -50,7 +50,7 @@ jobs:
           emulator-boot-timeout: 1200
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             adb shell settings put secure location_mode 3
             flutter build apk --debug
             # Wait for Package Manager after the slow emulator boot.
@@ -70,7 +70,7 @@ jobs:
               timeout 30s adb shell cmd package list packages >/dev/null 2>&1 || true
               sleep 10
             done
-            if [[ "$install_ok" != true ]]; then
+            if [ "$install_ok" != true ]; then
               echo "::error::APK install failed after two bounded non-streaming attempts"
               adb logcat -d -t 1000 | tail -n 200 || true
               exit 1
