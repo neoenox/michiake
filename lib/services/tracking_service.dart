@@ -52,7 +52,7 @@ class TrackingService {
       foregroundTaskOptions: ForegroundTaskOptions(
         eventAction: ForegroundTaskEventAction.nothing(),
         autoRunOnBoot: false,
-        autoRunOnMyPackageReplaced: true,
+        autoRunOnMyPackageReplaced: false,
         allowWakeLock: true,
         allowAutoRestart: true,
         stopWithTask: false,
