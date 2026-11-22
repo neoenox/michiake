@@ -311,6 +311,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   bool _fogRefreshing = false;
   bool _fogRefreshQueued = false;
   bool _forceFogRefreshQueued = false;
+  Timer? _fogDebounce;
   Map<String, num> _totals = const {};
   DailyQuestProgress? _dailyQuest;
   Set<int> _earnedDiscoveryCardIds = const {};
@@ -366,6 +367,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
+    _fogDebounce?.cancel();
     super.dispose();
   }
 
@@ -459,6 +461,16 @@ class _MapHomeScreenState extends State<MapHomeScreen>
     } catch (_) {
       if (mounted) _showMessage('探索依頼を保存できませんでした。もう一度お試しください。');
     }
+  }
+
+  void _scheduleFogRefresh() {
+    // Camera idle fires repeatedly while panning. Debounce the expensive
+    // viewport query + GeoJSON rebuild and rely on the unchanged-viewport
+    // short-circuit inside _refreshFog instead of forcing a reload.
+    _fogDebounce?.cancel();
+    _fogDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) _refreshFog();
+    });
   }
 
   Future<void> _refreshFog({bool force = false}) async {
@@ -676,7 +688,7 @@ class _MapHomeScreenState extends State<MapHomeScreen>
                       AttributionButtonPosition.bottomLeft,
                   onMapCreated: _onMapCreated,
                   onStyleLoadedCallback: _onStyleLoaded,
-                  onCameraIdle: () => _refreshFog(force: true),
+                  onCameraIdle: _scheduleFogRefresh,
                 ),
                 if (_mapProblem)
                   const Positioned(
